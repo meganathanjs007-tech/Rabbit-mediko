@@ -1,0 +1,369 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true ||
+        request.auth.token.firebase.sign_in_provider == 'phone'
+      );
+    }
+
+    function isOwner(uid) {
+      return isVerifiedUser() && request.auth.uid == uid;
+    }
+
+    function isFamilyMember(familyId) {
+      return isVerifiedUser() &&
+        exists(/databases/$(database)/documents/families/$(familyId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/families/$(familyId)).data.memberUids;
+    }
+
+    function isFamilyOwner(familyId) {
+      return isVerifiedUser() &&
+        exists(/databases/$(database)/documents/families/$(familyId)) &&
+        get(/databases/$(database)/documents/families/$(familyId)).data.createdBy == request.auth.uid;
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUserProfile(data, uid) {
+      return data.keys().hasAll(['uid', 'language', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'familyId', 'phone', 'email', 'displayName', 'language', 'createdAt']) &&
+        data.uid is string && data.uid == uid && isValidId(data.uid) &&
+        data.language in ['en', 'ta'] &&
+        data.createdAt is timestamp &&
+        (!('familyId' in data) || (data.familyId is string && data.familyId.size() <= 128)) &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 32)) &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 160)) &&
+        (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100));
+    }
+
+    function isValidFamily(data) {
+      return data.keys().hasAll(['familyName', 'createdBy', 'memberUids', 'createdAt']) &&
+        data.keys().hasOnly(['familyName', 'createdBy', 'memberUids', 'emergencyContact', 'createdAt']) &&
+        data.familyName is string && data.familyName.size() >= 1 && data.familyName.size() <= 80 &&
+        data.createdBy is string && isValidId(data.createdBy) &&
+        data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= 10 &&
+        data.memberUids[0] is string &&
+        data.createdAt is timestamp &&
+        (!('emergencyContact' in data) || (data.emergencyContact is string && data.emergencyContact.size() <= 32));
+    }
+
+    function isValidFamilyMember(data) {
+      return data.keys().hasAll(['ownerUid', 'name', 'age', 'gender', 'bloodGroup', 'allergies', 'conditions', 'cardId', 'createdAt']) &&
+        data.keys().hasOnly(['ownerUid', 'name', 'age', 'gender', 'bloodGroup', 'allergies', 'conditions', 'emergencyContact', 'cardId', 'createdAt']) &&
+        data.ownerUid is string && isValidId(data.ownerUid) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+        data.age is number && data.age >= 0 && data.age <= 130 &&
+        data.gender in ['M', 'F', 'Other'] &&
+        data.bloodGroup in ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'] &&
+        data.allergies is list && data.allergies.size() <= 15 &&
+        (data.allergies.size() == 0 || data.allergies[0] is string) &&
+        data.conditions is list && data.conditions.size() <= 15 &&
+        (data.conditions.size() == 0 || data.conditions[0] is string) &&
+        data.cardId is string && isValidId(data.cardId) && data.cardId.size() >= 8 &&
+        data.createdAt is timestamp &&
+        (!('emergencyContact' in data) || (data.emergencyContact is string && data.emergencyContact.size() <= 32));
+    }
+
+    function isValidHealthRecord(data) {
+      return data.keys().hasAll(['ownerUid', 'memberId', 'type', 'value', 'date', 'createdAt']) &&
+        data.keys().hasOnly(['ownerUid', 'memberId', 'type', 'value', 'systolic', 'diastolic', 'numericValue', 'date', 'fileUrl', 'fileName', 'doctorName', 'notes', 'createdAt']) &&
+        data.ownerUid is string && isValidId(data.ownerUid) &&
+        data.memberId is string && isValidId(data.memberId) &&
+        data.type in ['BP', 'Sugar', 'Report', 'DoctorVisit'] &&
+        data.value is string && data.value.size() >= 1 && data.value.size() <= 120 &&
+        data.date is string && data.date.size() >= 8 && data.date.size() <= 32 &&
+        data.createdAt is timestamp &&
+        (!('systolic' in data) || (data.systolic is number && data.systolic >= 30 && data.systolic <= 350)) &&
+        (!('diastolic' in data) || (data.diastolic is number && data.diastolic >= 20 && data.diastolic <= 250)) &&
+        (!('numericValue' in data) || (data.numericValue is number && data.numericValue >= 0 && data.numericValue <= 1500)) &&
+        (!('fileUrl' in data) || (data.fileUrl is string && data.fileUrl.size() <= 2000)) &&
+        (!('fileName' in data) || (data.fileName is string && data.fileName.size() <= 200)) &&
+        (!('doctorName' in data) || (data.doctorName is string && data.doctorName.size() <= 120)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000));
+    }
+
+    function isValidMedicine(data) {
+      return data.keys().hasAll(['ownerUid', 'memberId', 'name', 'dosage', 'frequency', 'times', 'startDate', 'active', 'createdAt']) &&
+        data.keys().hasOnly(['ownerUid', 'memberId', 'name', 'dosage', 'frequency', 'times', 'startDate', 'endDate', 'expiryDate', 'active', 'createdAt']) &&
+        data.ownerUid is string && isValidId(data.ownerUid) &&
+        data.memberId is string && isValidId(data.memberId) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.dosage is string && data.dosage.size() >= 1 && data.dosage.size() <= 60 &&
+        data.frequency in ['Once', 'Twice', 'Thrice'] &&
+        data.times is list && data.times.size() >= 1 && data.times.size() <= 6 &&
+        data.times[0] is string &&
+        data.startDate is string && data.startDate.size() >= 8 && data.startDate.size() <= 32 &&
+        data.active is bool &&
+        data.createdAt is timestamp &&
+        (!('endDate' in data) || (data.endDate is string && data.endDate.size() <= 32)) &&
+        (!('expiryDate' in data) || (data.expiryDate is string && data.expiryDate.size() <= 32));
+    }
+
+    function isValidMedicineLog(data) {
+      return data.keys().hasAll(['ownerUid', 'medicineId', 'memberId', 'date', 'time', 'takenAt']) &&
+        data.keys().hasOnly(['ownerUid', 'medicineId', 'memberId', 'date', 'time', 'takenAt']) &&
+        data.ownerUid is string && isValidId(data.ownerUid) &&
+        data.medicineId is string && isValidId(data.medicineId) &&
+        data.memberId is string && isValidId(data.memberId) &&
+        data.date is string && data.date.size() >= 8 && data.date.size() <= 16 &&
+        data.time is string && data.time.size() >= 3 && data.time.size() <= 16 &&
+        data.takenAt is timestamp;
+    }
+
+    function isValidMealPlan(data, dateId) {
+      return data.keys().hasAll(['ownerUid', 'date', 'breakfast', 'lunch', 'dinner', 'snacks', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerUid', 'date', 'breakfast', 'lunch', 'dinner', 'snacks', 'updatedAt']) &&
+        data.ownerUid is string && isValidId(data.ownerUid) &&
+        data.date is string && data.date == dateId && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.breakfast is list && data.breakfast.size() <= 15 && (data.breakfast.size() == 0 || data.breakfast[0] is string) &&
+        data.lunch is list && data.lunch.size() <= 15 && (data.lunch.size() == 0 || data.lunch[0] is string) &&
+        data.dinner is list && data.dinner.size() <= 15 && (data.dinner.size() == 0 || data.dinner[0] is string) &&
+        data.snacks is list && data.snacks.size() <= 15 && (data.snacks.size() == 0 || data.snacks[0] is string) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidGroceryItem(data) {
+      return data.keys().hasAll(['ownerUid', 'name', 'category', 'checked', 'createdAt']) &&
+        data.keys().hasOnly(['ownerUid', 'name', 'category', 'checked', 'createdAt']) &&
+        data.ownerUid is string && isValidId(data.ownerUid) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.category in ['Vegetables', 'Grains', 'Dairy', 'Others'] &&
+        data.checked is bool &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidAiInsight(data, memberId) {
+      return data.keys().hasAll(['ownerUid', 'memberId', 'analysis', 'language', 'timestamp']) &&
+        data.keys().hasOnly(['ownerUid', 'memberId', 'analysis', 'foodPatterns', 'language', 'timestamp']) &&
+        data.ownerUid is string && isValidId(data.ownerUid) &&
+        data.memberId is string && data.memberId == memberId && isValidId(data.memberId) &&
+        data.analysis is string && data.analysis.size() >= 1 && data.analysis.size() <= 6000 &&
+        data.language in ['en', 'ta'] &&
+        data.timestamp is timestamp &&
+        (!('foodPatterns' in data) || (data.foodPatterns is string && data.foodPatterns.size() <= 4000));
+    }
+
+    function isValidEmergencyCard(data) {
+      return data.keys().hasAll(['familyId', 'ownerUid', 'memberId', 'name', 'age', 'gender', 'bloodGroup', 'allergies', 'conditions', 'activeMedicines', 'updatedAt']) &&
+        data.keys().hasOnly(['familyId', 'ownerUid', 'memberId', 'name', 'age', 'gender', 'bloodGroup', 'allergies', 'conditions', 'emergencyContact', 'activeMedicines', 'updatedAt']) &&
+        data.familyId is string && isValidId(data.familyId) &&
+        data.ownerUid is string && isValidId(data.ownerUid) &&
+        data.memberId is string && isValidId(data.memberId) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+        data.age is number && data.age >= 0 && data.age <= 130 &&
+        data.gender in ['M', 'F', 'Other'] &&
+        data.bloodGroup in ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'] &&
+        data.allergies is list && data.allergies.size() <= 15 && (data.allergies.size() == 0 || data.allergies[0] is string) &&
+        data.conditions is list && data.conditions.size() <= 15 && (data.conditions.size() == 0 || data.conditions[0] is string) &&
+        data.activeMedicines is list && data.activeMedicines.size() <= 30 && (data.activeMedicines.size() == 0 || data.activeMedicines[0] is string) &&
+        data.updatedAt is timestamp &&
+        (!('emergencyContact' in data) || (data.emergencyContact is string && data.emergencyContact.size() <= 32));
+    }
+
+    // --- Collection Rules ---
+
+    // User profile (PII isolated to owner only)
+    match /users/{uid} {
+      allow get: if isValidId(uid) && isOwner(uid);
+      allow list: if false;
+      allow create: if isValidId(uid) && isOwner(uid) &&
+        isValidUserProfile(incoming(), uid) &&
+        incoming().createdAt == request.time;
+      allow update: if isValidId(uid) && isOwner(uid) &&
+        isValidUserProfile(incoming(), uid) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['familyId', 'phone', 'email', 'displayName', 'language']);
+      allow delete: if isValidId(uid) && isOwner(uid);
+    }
+
+    // Family root document
+    match /families/{familyId} {
+      allow get: if isValidId(familyId) && isVerifiedUser() && request.auth.uid in existing().memberUids;
+      allow list: if isVerifiedUser() && request.auth.uid in existing().memberUids;
+      allow create: if isValidId(familyId) && isVerifiedUser() &&
+        isValidFamily(incoming()) &&
+        incoming().createdBy == request.auth.uid &&
+        request.auth.uid in incoming().memberUids &&
+        incoming().createdAt == request.time;
+      allow update: if isValidId(familyId) && isVerifiedUser() &&
+        existing().createdBy == request.auth.uid &&
+        isValidFamily(incoming()) &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['familyName', 'emergencyContact', 'memberUids']);
+      allow delete: if isValidId(familyId) && isVerifiedUser() && existing().createdBy == request.auth.uid;
+
+      // Members subcollection
+      match /members/{memberId} {
+        allow get: if isValidId(familyId) && isValidId(memberId) && isFamilyMember(familyId);
+        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow create: if isValidId(familyId) && isValidId(memberId) &&
+          isValidFamilyMember(incoming()) &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          isFamilyMember(familyId);
+        allow update: if isValidId(familyId) && isValidId(memberId) &&
+          isValidFamilyMember(incoming()) &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().cardId == existing().cardId &&
+          isFamilyMember(familyId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'age', 'gender', 'bloodGroup', 'allergies', 'conditions', 'emergencyContact']);
+        allow delete: if isValidId(familyId) && isValidId(memberId) && isFamilyMember(familyId);
+      }
+
+      // Health Records subcollection
+      match /healthRecords/{recordId} {
+        allow get: if isValidId(familyId) && isValidId(recordId) && isFamilyMember(familyId);
+        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow create: if isValidId(familyId) && isValidId(recordId) &&
+          isValidHealthRecord(incoming()) &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          isFamilyMember(familyId);
+        allow update: if isValidId(familyId) && isValidId(recordId) &&
+          isValidHealthRecord(incoming()) &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt &&
+          isFamilyMember(familyId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['value', 'systolic', 'diastolic', 'numericValue', 'date', 'fileUrl', 'fileName', 'doctorName', 'notes']);
+        allow delete: if isValidId(familyId) && isValidId(recordId) && isFamilyMember(familyId);
+      }
+
+      // Medicines subcollection
+      match /medicines/{medicineId} {
+        allow get: if isValidId(familyId) && isValidId(medicineId) && isFamilyMember(familyId);
+        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow create: if isValidId(familyId) && isValidId(medicineId) &&
+          isValidMedicine(incoming()) &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          isFamilyMember(familyId);
+        allow update: if isValidId(familyId) && isValidId(medicineId) &&
+          isValidMedicine(incoming()) &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt &&
+          isFamilyMember(familyId) &&
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['active']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'dosage', 'frequency', 'times', 'startDate', 'endDate', 'expiryDate', 'active'])
+          );
+        allow delete: if isValidId(familyId) && isValidId(medicineId) && isFamilyMember(familyId);
+      }
+
+      // Medicine Logs subcollection
+      match /medicineLogs/{logId} {
+        allow get: if isValidId(familyId) && isValidId(logId) && isFamilyMember(familyId);
+        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow create: if isValidId(familyId) && isValidId(logId) &&
+          isValidMedicineLog(incoming()) &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().takenAt == request.time &&
+          isFamilyMember(familyId);
+        allow update: if false;
+        allow delete: if isValidId(familyId) && isValidId(logId) && isFamilyMember(familyId);
+      }
+
+      // Meal Plans subcollection
+      match /mealPlans/{dateId} {
+        allow get: if isValidId(familyId) && isValidId(dateId) && isFamilyMember(familyId);
+        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow create: if isValidId(familyId) && isValidId(dateId) &&
+          isValidMealPlan(incoming(), dateId) &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().updatedAt == request.time &&
+          isFamilyMember(familyId);
+        allow update: if isValidId(familyId) && isValidId(dateId) &&
+          isValidMealPlan(incoming(), dateId) &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().updatedAt == request.time &&
+          isFamilyMember(familyId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['breakfast', 'lunch', 'dinner', 'snacks', 'updatedAt']);
+        allow delete: if isValidId(familyId) && isValidId(dateId) && isFamilyMember(familyId);
+      }
+
+      // Grocery List subcollection
+      match /grocery/{itemId} {
+        allow get: if isValidId(familyId) && isValidId(itemId) && isFamilyMember(familyId);
+        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow create: if isValidId(familyId) && isValidId(itemId) &&
+          isValidGroceryItem(incoming()) &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          isFamilyMember(familyId);
+        allow update: if isValidId(familyId) && isValidId(itemId) &&
+          isValidGroceryItem(incoming()) &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt &&
+          isFamilyMember(familyId) &&
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['checked']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'checked'])
+          );
+        allow delete: if isValidId(familyId) && isValidId(itemId) && isFamilyMember(familyId);
+      }
+
+      // AI Insights subcollection
+      match /aiInsights/{memberId} {
+        allow get: if isValidId(familyId) && isValidId(memberId) && isFamilyMember(familyId);
+        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow create: if isValidId(familyId) && isValidId(memberId) &&
+          isValidAiInsight(incoming(), memberId) &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().timestamp == request.time &&
+          isFamilyMember(familyId);
+        allow update: if isValidId(familyId) && isValidId(memberId) &&
+          isValidAiInsight(incoming(), memberId) &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().timestamp == request.time &&
+          isFamilyMember(familyId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['analysis', 'foodPatterns', 'language', 'timestamp']);
+        allow delete: if isValidId(familyId) && isValidId(memberId) && isFamilyMember(familyId);
+      }
+    }
+
+    // Public Emergency QR Card (get only by unguessable cardId; list strictly denied)
+    match /emergencyCards/{cardId} {
+      allow get: if isValidId(cardId) && cardId.size() >= 8;
+      allow list: if false;
+      allow create: if isValidId(cardId) && cardId.size() >= 8 &&
+        isValidEmergencyCard(incoming()) &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().updatedAt == request.time &&
+        isFamilyOwner(incoming().familyId);
+      allow update: if isValidId(cardId) && cardId.size() >= 8 &&
+        isValidEmergencyCard(incoming()) &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().familyId == existing().familyId &&
+        incoming().memberId == existing().memberId &&
+        incoming().updatedAt == request.time &&
+        isFamilyOwner(existing().familyId) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'age', 'gender', 'bloodGroup', 'allergies', 'conditions', 'emergencyContact', 'activeMedicines', 'updatedAt']);
+      allow delete: if isValidId(cardId) && isFamilyOwner(existing().familyId);
+    }
+  }
+}

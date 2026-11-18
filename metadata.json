@@ -1,0 +1,6 @@
+{
+  "name": "Rabbit Mediko",
+  "description": "Family Health Vault & Smart Meal Planner for Indian families with bilingual Tamil and English support, medicine reminders, emergency QR cards, and AI health insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

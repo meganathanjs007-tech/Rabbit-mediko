@@ -1,0 +1,201 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user account linked to a family workspace.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "familyId": { "type": "string", "minLength": 0, "maxLength": 128 },
+        "phone": { "type": "string", "minLength": 0, "maxLength": 32 },
+        "email": { "type": "string", "minLength": 0, "maxLength": 160 },
+        "displayName": { "type": "string", "minLength": 0, "maxLength": 100 },
+        "language": { "type": "string", "enum": ["en", "ta"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "language", "createdAt"]
+    },
+    "Family": {
+      "title": "Family",
+      "description": "Root family container holding access control and metadata.",
+      "type": "object",
+      "properties": {
+        "familyName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberUids": { "type": "array", "description": "Authorized user UIDs (max 10)." },
+        "emergencyContact": { "type": "string", "minLength": 0, "maxLength": 32 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyName", "createdBy", "memberUids", "createdAt"]
+    },
+    "FamilyMember": {
+      "title": "FamilyMember",
+      "description": "Individual family member profile with medical background.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "age": { "type": "number" },
+        "gender": { "type": "string", "enum": ["M", "F", "Other"] },
+        "bloodGroup": { "type": "string", "enum": ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"] },
+        "allergies": { "type": "array" },
+        "conditions": { "type": "array" },
+        "emergencyContact": { "type": "string", "minLength": 0, "maxLength": 32 },
+        "cardId": { "type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "age", "gender", "bloodGroup", "allergies", "conditions", "cardId", "createdAt"]
+    },
+    "HealthRecord": {
+      "title": "HealthRecord",
+      "description": "Vitals reading (BP, Sugar), uploaded report, or doctor visit note.",
+      "type": "object",
+      "properties": {
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "type": { "type": "string", "enum": ["BP", "Sugar", "Report", "DoctorVisit"] },
+        "value": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "systolic": { "type": "number" },
+        "diastolic": { "type": "number" },
+        "numericValue": { "type": "number" },
+        "date": { "type": "string", "minLength": 8, "maxLength": 32 },
+        "fileUrl": { "type": "string", "minLength": 0, "maxLength": 2000 },
+        "fileName": { "type": "string", "minLength": 0, "maxLength": 200 },
+        "doctorName": { "type": "string", "minLength": 0, "maxLength": 120 },
+        "notes": { "type": "string", "minLength": 0, "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["memberId", "type", "value", "date", "createdAt"]
+    },
+    "Medicine": {
+      "title": "Medicine",
+      "description": "Prescribed medicine schedule for a family member.",
+      "type": "object",
+      "properties": {
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "dosage": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "frequency": { "type": "string", "enum": ["Once", "Twice", "Thrice"] },
+        "times": { "type": "array" },
+        "startDate": { "type": "string", "minLength": 8, "maxLength": 32 },
+        "endDate": { "type": "string", "minLength": 0, "maxLength": 32 },
+        "expiryDate": { "type": "string", "minLength": 0, "maxLength": 32 },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["memberId", "name", "dosage", "frequency", "times", "startDate", "active", "createdAt"]
+    },
+    "MedicineLog": {
+      "title": "MedicineLog",
+      "description": "Tracks a single taken medicine dose for a specific date and time slot.",
+      "type": "object",
+      "properties": {
+        "medicineId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "minLength": 8, "maxLength": 16 },
+        "time": { "type": "string", "minLength": 3, "maxLength": 16 },
+        "takenAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["medicineId", "memberId", "date", "time", "takenAt"]
+    },
+    "MealPlan": {
+      "title": "MealPlan",
+      "description": "Daily 4-slot meal plan for a family.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "minLength": 8, "maxLength": 16, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "breakfast": { "type": "array" },
+        "lunch": { "type": "array" },
+        "dinner": { "type": "array" },
+        "snacks": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "breakfast", "lunch", "dinner", "snacks", "updatedAt"]
+    },
+    "GroceryItem": {
+      "title": "GroceryItem",
+      "description": "Family grocery checklist item.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "category": { "type": "string", "enum": ["Vegetables", "Grains", "Dairy", "Others"] },
+        "checked": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "category", "checked", "createdAt"]
+    },
+    "AiInsight": {
+      "title": "AiInsight",
+      "description": "Cached AI health analysis and food pattern guidance per member.",
+      "type": "object",
+      "properties": {
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "analysis": { "type": "string", "minLength": 1, "maxLength": 6000 },
+        "foodPatterns": { "type": "string", "minLength": 0, "maxLength": 4000 },
+        "language": { "type": "string", "enum": ["en", "ta"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["memberId", "analysis", "language", "timestamp"]
+    },
+    "EmergencyCard": {
+      "title": "EmergencyCard",
+      "description": "Publicly readable emergency medical summary indexed by unguessable cardId.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "age": { "type": "number" },
+        "gender": { "type": "string", "enum": ["M", "F", "Other"] },
+        "bloodGroup": { "type": "string", "enum": ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"] },
+        "allergies": { "type": "array" },
+        "conditions": { "type": "array" },
+        "emergencyContact": { "type": "string", "minLength": 0, "maxLength": 32 },
+        "activeMedicines": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyId", "ownerUid", "memberId", "name", "age", "gender", "bloodGroup", "allergies", "conditions", "activeMedicines", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "UserProfile",
+      "description": "Private user account profile storing family linkage and language preference."
+    },
+    "/families/{familyId}": {
+      "schema": "Family",
+      "description": "Family root document containing familyName, creator, and authorized memberUids."
+    },
+    "/families/{familyId}/members/{memberId}": {
+      "schema": "FamilyMember",
+      "description": "Family members belonging to a family."
+    },
+    "/families/{familyId}/healthRecords/{recordId}": {
+      "schema": "HealthRecord",
+      "description": "BP, Sugar, medical reports, and doctor visit logs."
+    },
+    "/families/{familyId}/medicines/{medicineId}": {
+      "schema": "Medicine",
+      "description": "Medicine prescriptions and reminder schedules."
+    },
+    "/families/{familyId}/medicineLogs/{logId}": {
+      "schema": "MedicineLog",
+      "description": "Daily taken status records for each medicine dose."
+    },
+    "/families/{familyId}/mealPlans/{date}": {
+      "schema": "MealPlan",
+      "description": "Daily meal plans keyed by YYYY-MM-DD."
+    },
+    "/families/{familyId}/grocery/{itemId}": {
+      "schema": "GroceryItem",
+      "description": "Auto-generated and manual grocery checklist items."
+    },
+    "/families/{familyId}/aiInsights/{memberId}": {
+      "schema": "AiInsight",
+      "description": "Cached Gemini health insights per family member."
+    },
+    "/emergencyCards/{cardId}": {
+      "schema": "EmergencyCard",
+      "description": "Publicly accessible emergency QR target card (get only, list denied)."
+    }
+  }
+}
