@@ -90,6 +90,19 @@ export function getSugarStatus(val?: number): 'normal' | 'low' | 'high' {
   return 'normal';
 }
 
+export function getHeartRateStatus(bpm?: number): 'normal' | 'low' | 'high' {
+  if (bpm === undefined || bpm === null) return 'normal';
+  if (bpm > 100) return 'high';
+  if (bpm < 60) return 'low';
+  return 'normal';
+}
+
+export function getSpO2Status(pct?: number): 'normal' | 'low' {
+  if (pct === undefined || pct === null) return 'normal';
+  if (pct < 95) return 'low';
+  return 'normal';
+}
+
 export function getDaysUntilDate(dateStr?: string): number | null {
   if (!dateStr) return null;
   const target = new Date(dateStr + 'T00:00:00');

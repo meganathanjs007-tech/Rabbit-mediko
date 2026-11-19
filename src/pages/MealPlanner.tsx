@@ -127,7 +127,7 @@ export default function MealPlanner() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.2 }}
-        className="space-y-6"
+        className="w-full min-w-0 space-y-6"
       >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
@@ -298,7 +298,13 @@ export default function MealPlanner() {
                   className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-60 transition-colors min-h-[44px] cursor-pointer"
                 >
                   <Sparkles className="w-4 h-4 text-emerald-400" />
-                  <span>{aiLoading ? 'Thinking in Tamil...' : t.meals.aiSuggest}</span>
+                  <span>
+                    {aiLoading
+                      ? language === 'ta'
+                        ? 'உணவு பரிந்துரைகள் தயாராகின்றன...'
+                        : 'Generating healthy meal ideas...'
+                      : t.meals.aiSuggest}
+                  </span>
                 </button>
 
                 {aiSuggestions.length > 0 && (
@@ -309,7 +315,7 @@ export default function MealPlanner() {
                         key={idx}
                         className="p-3 rounded-xl border border-emerald-200 bg-emerald-50/50 flex items-start justify-between gap-3"
                       >
-                        <div className="space-y-0.5">
+                        <div className="space-y-0.5 min-w-0">
                           <p className="text-sm font-semibold text-slate-900">
                             {item.tamilTitle} ({item.name})
                           </p>

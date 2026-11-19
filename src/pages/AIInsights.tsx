@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { BrainCircuit, RefreshCw, Sparkles, Utensils } from 'lucide-react';
+import { BrainCircuit, ExternalLink, Globe, Loader2, RefreshCw, Search, Sparkles, Utensils } from 'lucide-react';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import { AppShell } from '../components/BottomNav';
@@ -8,7 +8,7 @@ import { EmptyState } from '../components/EmptyState';
 import { MemberSelector } from '../components/MemberSelector';
 import { useFamily } from '../hooks/useFamily';
 import { db } from '../services/firebase';
-import { fetchHealthInsights } from '../services/gemini';
+import { fetchHealthInsights, searchGroundedHealthInfo, type GroundedSource } from '../services/gemini';
 import { addDaysISO, getTodayISO } from '../utils/helpers';
 import { getT } from '../utils/i18n';
 
@@ -19,6 +19,9 @@ export default function AIInsights() {
   const [selectedId, setSelectedId] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [searchResult, setSearchResult] = useState<{ answer: string; sources: GroundedSource[] } | null>(null);
 
   useEffect(() => {
     if (!selectedId && members.length > 0) {
@@ -45,6 +48,14 @@ export default function AIInsights() {
     const sugarReadings = memberRecords
       .filter((r) => r.type === 'Sugar')
       .map((r) => ({ date: r.date, value: r.value }));
+    const watchVitals = memberRecords
+      .filter((r) => r.type === 'HeartRate' || r.type === 'SpO2')
+      .slice(0, 10)
+      .map((r) => ({ date: r.date, type: r.type, value: r.value }));
+    const doctorVisits = memberRecords
+      .filter((r) => r.type === 'DoctorVisit')
+      .slice(0, 5)
+      .map((r) => ({ date: r.date, doctorName: r.doctorName || r.value, notes: r.notes || '' }));
 
     const recentMeals = Object.values(mealPlans)
       .sort((a, b) => b.date.localeCompare(a.date))
@@ -67,8 +78,11 @@ export default function AIInsights() {
         age: activeMember.age,
         gender: activeMember.gender,
         conditions: activeMember.conditions,
+        allergies: activeMember.allergies,
         bpReadings,
         sugarReadings,
+        watchVitals,
+        doctorVisits,
         recentMeals,
         activeMedicines: activeMeds,
         language,
@@ -95,6 +109,35 @@ export default function AIInsights() {
       toast.error(msg);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const runHealthSearch = async (customQuery?: string) => {
+    const q = (customQuery ?? searchQuery).trim();
+    if (!q) return;
+    if (customQuery) setSearchQuery(customQuery);
+    setSearching(true);
+
+    const latestRecs = activeMember
+      ? healthRecords.filter((r) => r.memberId === activeMember.id).slice(0, 5)
+      : [];
+    const latestVitals = latestRecs.map((r) => `${r.type}: ${r.value} (${r.date})`).join(', ');
+
+    try {
+      const res = await searchGroundedHealthInfo({
+        query: q,
+        memberName: activeMember?.name,
+        age: activeMember?.age,
+        conditions: activeMember?.conditions,
+        allergies: activeMember?.allergies,
+        latestVitals,
+        language,
+      });
+      setSearchResult(res);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Health search failed');
+    } finally {
+      setSearching(false);
     }
   };
 
@@ -231,6 +274,111 @@ export default function AIInsights() {
             </section>
           </div>
         )}
+
+        {/* Grounded AI Health Research (Google Search) */}
+        <section className="w-full min-w-0 bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                <Globe className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-base font-bold text-slate-900">
+                  {language === 'ta'
+                    ? 'உடனடி மருத்துவத் தகவல் தேடல் (Google Search AI)'
+                    : 'Verified Health Search (Google Search Grounded AI)'}
+                </h2>
+                <p className="text-xs text-slate-500">
+                  {language === 'ta'
+                    ? 'BP, சர்க்கரை, இதயத் துடிப்பு, SpO2 மற்றும் உணவு குறித்த சமீபத்திய வழிகாட்டுதல்களைக் கேளுங்கள்.'
+                    : 'Ask about BP, sugar, smartwatch HR/SpO2 ranges, or medication precautions with cited sources.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void runHealthSearch();
+            }}
+            className="flex flex-col sm:flex-row gap-2.5"
+          >
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={
+                language === 'ta'
+                  ? 'கேள்வி கேளுங்கள் (எ.கா. சர்க்கரை நோயாளிகளுக்கான சிறந்த இரவு உணவு)...'
+                  : 'Ask a health question (e.g., Latest normal resting heart rate & BP guidelines)...'
+              }
+              className="flex-1 min-w-0 w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-600"
+            />
+            <button
+              type="submit"
+              disabled={searching || !searchQuery.trim()}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-60 min-h-[44px] shrink-0 cursor-pointer"
+            >
+              {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+              <span>{searching ? (language === 'ta' ? 'தேடுகிறது...' : 'Searching...') : (language === 'ta' ? 'கேள்' : 'Search AI')}</span>
+            </button>
+          </form>
+
+          <div className="flex flex-wrap gap-2">
+            {(language === 'ta'
+              ? [
+                  'இயல்பான BP மற்றும் இதயத் துடிப்பு அளவு என்ன?',
+                  'சர்க்கரை நோய்க்கு ஏற்ற தென்னிந்திய உணவுகள்',
+                  'SpO2 அளவு குறைந்தால் என்ன செய்ய வேண்டும்?',
+                ]
+              : [
+                  'What are normal BP, HR, and SpO2 levels?',
+                  'Best South Indian low-GI dinner options',
+                  'When should I see a doctor for high blood sugar?',
+                ]
+            ).map((sample) => (
+              <button
+                key={sample}
+                type="button"
+                disabled={searching}
+                onClick={() => void runHealthSearch(sample)}
+                className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-blue-50 hover:border-blue-200 text-slate-700 cursor-pointer"
+              >
+                {sample}
+              </button>
+            ))}
+          </div>
+
+          {searchResult && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+              <div className="text-sm text-slate-800 leading-relaxed whitespace-pre-line break-words">
+                {searchResult.answer}
+              </div>
+              {searchResult.sources.length > 0 && (
+                <div className="pt-2 border-t border-slate-200 space-y-1.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    {language === 'ta' ? 'சரிபார்க்கப்பட்ட ஆதாரங்கள்' : 'Google Search Sources'}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {searchResult.sources.map((src, idx) => (
+                      <a
+                        key={`${src.uri}-${idx}`}
+                        href={src.uri}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-200 rounded-lg px-2.5 py-1 hover:bg-blue-50 max-w-full"
+                      >
+                        <span className="truncate max-w-[220px]">{src.title}</span>
+                        <ExternalLink className="w-3 h-3 shrink-0" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
       </motion.div>
     </AppShell>
   );

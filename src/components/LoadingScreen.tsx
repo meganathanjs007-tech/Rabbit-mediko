@@ -1,4 +1,4 @@
-import { Loader2 } from 'lucide-react';
+import { motion } from 'motion/react';
 import { BrandLogo } from './BrandLogo';
 
 export function LoadingScreen({ message = 'Loading Rabbit Mediko...' }: { message?: string }) {
@@ -6,23 +6,59 @@ export function LoadingScreen({ message = 'Loading Rabbit Mediko...' }: { messag
     <div
       role="status"
       aria-live="polite"
-      className="min-h-screen w-full bg-[#F8FAFC] flex flex-col items-center justify-center p-6 gap-5"
+      className="min-h-screen w-full overflow-hidden bg-[#0B0B11] text-white flex flex-col items-center justify-center px-6 py-10 relative"
     >
-      <div className="relative flex items-center justify-center">
-        <BrandLogo size="xl" className="shadow-lg shadow-slate-900/15" />
-        <span className="absolute -bottom-1.5 -right-1.5 w-7 h-7 rounded-full bg-white border border-slate-200 shadow-xs flex items-center justify-center">
-          <Loader2 className="w-4 h-4 text-emerald-600 animate-spin" />
-        </span>
-      </div>
+      {/* Subtle Ambient Radial Glow */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute w-72 h-72 rounded-full bg-emerald-500/10 blur-3xl"
+      />
 
-      <div className="text-center space-y-1 max-w-xs">
-        <p className="text-base font-bold tracking-tight text-slate-900">Rabbit Mediko</p>
-        <p className="text-sm text-slate-500">{message}</p>
-      </div>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.25, ease: 'easeOut' }}
+        className="relative z-10 flex flex-col items-center gap-7 max-w-xs w-full"
+      >
+        {/* Orbital Ring + Brand Logo */}
+        <div className="relative w-28 h-28 flex items-center justify-center">
+          <motion.div
+            aria-hidden="true"
+            animate={{ rotate: 360 }}
+            transition={{ duration: 2.2, repeat: Infinity, ease: 'linear' }}
+            className="absolute inset-0 rounded-full border-2 border-white/10 border-t-emerald-400 border-r-violet-400/70"
+          />
+          <motion.div
+            aria-hidden="true"
+            animate={{ rotate: -360 }}
+            transition={{ duration: 3.6, repeat: Infinity, ease: 'linear' }}
+            className="absolute inset-2 rounded-full border border-white/5 border-b-emerald-500/50"
+          />
+          <motion.div
+            animate={{ scale: [1, 1.03, 1] }}
+            transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}
+          >
+            <BrandLogo size="xl" className="ring-1 ring-white/15 shadow-2xl shadow-emerald-950/60" />
+          </motion.div>
+        </div>
 
-      <div className="w-40 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-        <div className="h-full w-1/2 bg-emerald-600 rounded-full animate-pulse" />
-      </div>
+        {/* Title + Live Status */}
+        <div className="text-center space-y-2">
+          <h1 className="text-xl font-bold tracking-tight text-white">Rabbit Mediko</h1>
+          <p className="text-sm text-slate-400 leading-relaxed min-h-[20px]">{message}</p>
+        </div>
+
+        {/* Smooth Sliding Progress Track */}
+        <div className="w-48 h-1.5 bg-white/10 rounded-full overflow-hidden relative">
+          <motion.div
+            aria-hidden="true"
+            initial={{ x: '-100%' }}
+            animate={{ x: '220%' }}
+            transition={{ duration: 1.35, repeat: Infinity, ease: 'easeInOut' }}
+            className="h-full w-1/2 rounded-full bg-gradient-to-r from-emerald-400 via-teal-300 to-violet-400"
+          />
+        </div>
+      </motion.div>
     </div>
   );
 }

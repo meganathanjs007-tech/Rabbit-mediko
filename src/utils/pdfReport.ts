@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf';
 import type { FamilyMember, HealthRecord } from '../types/health';
-import { getBPStatus, getSugarStatus } from './healthRules';
+import { getBPStatus, getHeartRateStatus, getSpO2Status, getSugarStatus } from './healthRules';
 import { getTodayISO } from './helpers';
 
 interface ExportHealthPdfParams {
@@ -30,6 +30,9 @@ export function exportMemberHealthPdf({
     .sort((a, b) => b.date.localeCompare(a.date));
   const visitRecords = records
     .filter((r) => r.type === 'DoctorVisit')
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const watchRecords = records
+    .filter((r) => r.type === 'HeartRate' || r.type === 'SpO2')
     .sort((a, b) => b.date.localeCompare(a.date));
 
   let y = 0;
@@ -236,6 +239,28 @@ export function exportMemberHealthPdf({
       ];
     })
   );
+
+  // Smartwatch Heart Rate & SpO2 Table (if recorded)
+  if (watchRecords.length > 0) {
+    drawTable(
+      'Smartwatch / Wearable Vitals (Heart Rate & SpO2)',
+      'Normal: HR 60–100 bpm · SpO2 ≥ 95%',
+      `Total: ${watchRecords.length} wearable readings  ·  Latest: ${watchRecords[0].value} (${watchRecords[0].date})`,
+      ['Date', 'Reading', 'Status', 'Notes'],
+      watchRecords.map((r) => {
+        const st =
+          r.type === 'HeartRate'
+            ? getHeartRateStatus(r.numericValue)
+            : getSpO2Status(r.numericValue);
+        return [
+          r.date,
+          r.value,
+          st === 'normal' ? 'Normal' : st === 'high' ? 'High' : 'Low',
+          r.notes || 'Wearable / Watch reading',
+        ];
+      })
+    );
+  }
 
   // Doctor Visits Summary (if recorded)
   if (visitRecords.length > 0) {

@@ -52,7 +52,7 @@
       "type": "object",
       "properties": {
         "memberId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "type": { "type": "string", "enum": ["BP", "Sugar", "Report", "DoctorVisit"] },
+        "type": { "type": "string", "enum": ["BP", "Sugar", "HeartRate", "SpO2", "Report", "DoctorVisit"] },
         "value": { "type": "string", "minLength": 1, "maxLength": 120 },
         "systolic": { "type": "number" },
         "diastolic": { "type": "number" },

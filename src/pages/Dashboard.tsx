@@ -20,7 +20,7 @@ import { Link } from 'react-router-dom';
 import { AppShell } from '../components/BottomNav';
 import { useFamily } from '../hooks/useFamily';
 import { db, getFriendlyFirebaseError } from '../services/firebase';
-import { getBPStatus, getSugarStatus } from '../utils/healthRules';
+import { getBPStatus, getHeartRateStatus, getSpO2Status, getSugarStatus } from '../utils/healthRules';
 import { formatLongDate, getInitials, getTimeGreeting, getTodayISO } from '../utils/helpers';
 import { getT } from '../utils/i18n';
 
@@ -110,6 +110,36 @@ export default function Dashboard() {
             value: latestSugar.value,
             date: latestSugar.date,
             status: sugarStat,
+          });
+        }
+      }
+      const latestHr = memberRecords.find((r) => r.type === 'HeartRate');
+      if (latestHr) {
+        const hrStat = getHeartRateStatus(latestHr.numericValue);
+        if (hrStat !== 'normal') {
+          alerts.push({
+            id: latestHr.id,
+            memberId: member.id,
+            memberName: member.name,
+            metric: 'Watch Heart Rate',
+            value: latestHr.value,
+            date: latestHr.date,
+            status: hrStat,
+          });
+        }
+      }
+      const latestSpo2 = memberRecords.find((r) => r.type === 'SpO2');
+      if (latestSpo2) {
+        const spo2Stat = getSpO2Status(latestSpo2.numericValue);
+        if (spo2Stat !== 'normal') {
+          alerts.push({
+            id: latestSpo2.id,
+            memberId: member.id,
+            memberName: member.name,
+            metric: 'Watch SpO2',
+            value: latestSpo2.value,
+            date: latestSpo2.date,
+            status: spo2Stat,
           });
         }
       }

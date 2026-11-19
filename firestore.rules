@@ -101,7 +101,7 @@ service cloud.firestore {
         data.keys().hasOnly(['ownerUid', 'memberId', 'type', 'value', 'systolic', 'diastolic', 'numericValue', 'date', 'fileUrl', 'fileName', 'doctorName', 'notes', 'createdAt']) &&
         data.ownerUid is string && isValidId(data.ownerUid) &&
         data.memberId is string && isValidId(data.memberId) &&
-        data.type in ['BP', 'Sugar', 'Report', 'DoctorVisit'] &&
+        data.type in ['BP', 'Sugar', 'HeartRate', 'SpO2', 'Report', 'DoctorVisit'] &&
         data.value is string && data.value.size() >= 1 && data.value.size() <= 120 &&
         data.date is string && data.date.size() >= 8 && data.date.size() <= 32 &&
         data.createdAt is timestamp &&

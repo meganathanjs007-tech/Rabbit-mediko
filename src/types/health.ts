@@ -4,7 +4,7 @@ export type Gender = 'M' | 'F' | 'Other';
 
 export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'O+' | 'O-' | 'AB+' | 'AB-';
 
-export type HealthRecordType = 'BP' | 'Sugar' | 'Report' | 'DoctorVisit';
+export type HealthRecordType = 'BP' | 'Sugar' | 'HeartRate' | 'SpO2' | 'Report' | 'DoctorVisit';
 
 export type MedicineFrequency = 'Once' | 'Twice' | 'Thrice';
 

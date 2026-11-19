@@ -14,25 +14,29 @@ import { deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import {
   Activity,
+  Bluetooth,
   Download,
   ExternalLink,
   FileText,
+  HeartPulse,
   Plus,
   Stethoscope,
   Trash2,
   Upload,
+  Watch,
   X,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import { useSearchParams } from 'react-router-dom';
+import { BluetoothWatchModal } from '../components/BluetoothWatchModal';
 import { AppShell } from '../components/BottomNav';
 import { EmptyState } from '../components/EmptyState';
 import { MemberSelector } from '../components/MemberSelector';
 import { useFamily } from '../hooks/useFamily';
 import { db, getFriendlyFirebaseError, storage } from '../services/firebase';
 import type { HealthRecordType } from '../types/health';
-import { getBPStatus, getSugarStatus } from '../utils/healthRules';
+import { getBPStatus, getHeartRateStatus, getSpO2Status, getSugarStatus } from '../utils/healthRules';
 import { generateSecureId, getTodayISO } from '../utils/helpers';
 import { getT } from '../utils/i18n';
 import { exportMemberHealthPdf } from '../utils/pdfReport';
@@ -46,6 +50,7 @@ export default function HealthVault() {
 
   const [selectedMemberId, setSelectedMemberId] = useState<string>('');
   const [modalOpen, setModalOpen] = useState(false);
+  const [watchModalOpen, setWatchModalOpen] = useState(false);
 
   const [entryType, setEntryType] = useState<HealthRecordType>('BP');
   const [date, setDate] = useState(getTodayISO());
@@ -98,6 +103,11 @@ export default function HealthVault() {
 
   const visitsList = useMemo(
     () => memberRecords.filter((r) => r.type === 'DoctorVisit'),
+    [memberRecords]
+  );
+
+  const watchList = useMemo(
+    () => memberRecords.filter((r) => r.type === 'HeartRate' || r.type === 'SpO2'),
     [memberRecords]
   );
 
@@ -292,12 +302,20 @@ export default function HealthVault() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.2 }}
-        className="space-y-6"
+        className="w-full min-w-0 space-y-6"
       >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <h1 className="text-2xl font-bold text-slate-900">{t.vault.title}</h1>
           {activeMember && (
             <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => setWatchModalOpen(true)}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-blue-200 bg-blue-50/70 text-blue-800 text-sm font-semibold hover:bg-blue-100/70 transition-colors min-h-[44px] cursor-pointer"
+              >
+                <Bluetooth className="w-4 h-4 text-blue-600" />
+                <span>{language === 'ta' ? 'வாட்ச் இணை (Optional)' : 'Connect Watch (Optional)'}</span>
+              </button>
               <button
                 type="button"
                 onClick={handleExportPdf}
@@ -534,7 +552,99 @@ export default function HealthVault() {
                 )}
               </section>
             </div>
+
+            {/* Optional Bluetooth Smartwatch / Wearable Vitals */}
+            <section className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                    <Watch className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">
+                      {language === 'ta'
+                        ? 'ஸ்மார்ட்வாட்ச் அளவுகள் (விருப்பத் தேர்வு)'
+                        : 'Smartwatch & Wearable Vitals (Optional)'}
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      {language === 'ta'
+                        ? 'புளூடூத் வாட்ச் மூலம் இதயத் துடிப்பு, SpO2 மற்றும் BP-ஐ இணைத்து AI மூலம் சரிபார்க்கவும்.'
+                        : 'Optional Bluetooth watch sync or manual HR / SpO2 logging with AI health check.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setWatchModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-blue-200 bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100 min-h-[38px] cursor-pointer"
+                >
+                  <Bluetooth className="w-3.5 h-3.5" />
+                  <span>{language === 'ta' ? 'வாட்ச் திற' : 'Sync / Check Watch'}</span>
+                </button>
+              </div>
+
+              {watchList.length === 0 ? (
+                <p className="text-xs text-slate-500 py-2">
+                  {language === 'ta'
+                    ? 'இதுவரை வாட்ச் அளவுகள் சேர்க்கப்படவில்லை.'
+                    : 'No smartwatch Heart Rate or SpO2 readings logged yet.'}
+                </p>
+              ) : (
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {watchList.slice(0, 6).map((item) => {
+                    const status =
+                      item.type === 'HeartRate'
+                        ? getHeartRateStatus(item.numericValue)
+                        : getSpO2Status(item.numericValue);
+                    return (
+                      <div
+                        key={item.id}
+                        className="rounded-xl border border-slate-200/80 bg-slate-50/70 px-3.5 py-2.5 flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <HeartPulse className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                            <span className="text-sm font-mono font-bold text-slate-900">
+                              {item.value}
+                            </span>
+                            <span
+                              className={`text-[11px] font-semibold ${
+                                status === 'normal' ? 'text-emerald-600' : 'text-red-600'
+                              }`}
+                            >
+                              {status === 'normal' ? 'Normal' : status === 'high' ? 'High' : 'Low'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 truncate">
+                            {item.date} {item.notes ? `· ${item.notes}` : ''}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteRecord(item.id)}
+                          className="p-1.5 text-slate-400 hover:text-red-600 shrink-0 cursor-pointer"
+                          aria-label="Delete wearable reading"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
           </>
+        )}
+
+        {family && activeMember && (
+          <BluetoothWatchModal
+            open={watchModalOpen}
+            onClose={() => setWatchModalOpen(false)}
+            familyId={family.id}
+            actorUid={user?.uid ?? family.createdBy}
+            member={activeMember}
+            language={language}
+          />
         )}
 
         {/* Add Reading Modal */}
