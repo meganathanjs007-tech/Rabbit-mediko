@@ -2,7 +2,7 @@ import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 
 function getGeminiClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+  if (!apiKey || apiKey === 'AQ.Ab8RN6KtnZmWTMX1T9Ks05xk7_I2A9rwzhk5zjKHT_DPM_TXlw') {
     throw new Error('GEMINI_API_KEY is not configured in environment secrets.');
   }
   return new GoogleGenAI({
