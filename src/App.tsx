@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { MedicineNotificationManager } from './components/MedicineNotificationManager';
 import { LoadingScreen } from './components/LoadingScreen';
 import { Toast } from './components/Toast';
 import { FamilyProvider } from './context/FamilyContext';
@@ -27,7 +28,11 @@ function ProtectedRoute({
   const { user, authReady, family, familyLoading } = useFamily();
 
   if (!authReady || (user && familyLoading)) {
-    return <LoadingScreen />;
+    return (
+      <LoadingScreen
+        message={!authReady ? 'Initializing session...' : 'Loading your family workspace...'}
+      />
+    );
   }
 
   if (!user) {
@@ -130,6 +135,7 @@ export default function App() {
       <FamilyProvider>
         <BrowserRouter>
           <Toast />
+          <MedicineNotificationManager />
           <AppRoutes />
         </BrowserRouter>
       </FamilyProvider>

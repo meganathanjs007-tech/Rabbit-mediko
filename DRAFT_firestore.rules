@@ -11,6 +11,10 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidInviteCode(code) {
+      return code is string && code.size() >= 6 && code.size() <= 12 && code.matches('^[A-Z0-9]+$');
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -26,6 +30,7 @@ service cloud.firestore {
     function isVerifiedUser() {
       return isSignedIn() && (
         request.auth.token.email_verified == true ||
+        request.auth.token.firebase.sign_in_provider == 'google.com' ||
         request.auth.token.firebase.sign_in_provider == 'phone'
       );
     }
@@ -38,12 +43,6 @@ service cloud.firestore {
       return isVerifiedUser() &&
         exists(/databases/$(database)/documents/families/$(familyId)) &&
         request.auth.uid in get(/databases/$(database)/documents/families/$(familyId)).data.memberUids;
-    }
-
-    function isFamilyOwner(familyId) {
-      return isVerifiedUser() &&
-        exists(/databases/$(database)/documents/families/$(familyId)) &&
-        get(/databases/$(database)/documents/families/$(familyId)).data.createdBy == request.auth.uid;
     }
 
     // --- Validation Blueprints ---
@@ -61,13 +60,23 @@ service cloud.firestore {
 
     function isValidFamily(data) {
       return data.keys().hasAll(['familyName', 'createdBy', 'memberUids', 'createdAt']) &&
-        data.keys().hasOnly(['familyName', 'createdBy', 'memberUids', 'emergencyContact', 'createdAt']) &&
+        data.keys().hasOnly(['familyName', 'createdBy', 'memberUids', 'emergencyContact', 'inviteCode', 'createdAt']) &&
         data.familyName is string && data.familyName.size() >= 1 && data.familyName.size() <= 80 &&
         data.createdBy is string && isValidId(data.createdBy) &&
-        data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= 10 &&
+        data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= 25 &&
         data.memberUids[0] is string &&
         data.createdAt is timestamp &&
-        (!('emergencyContact' in data) || (data.emergencyContact is string && data.emergencyContact.size() <= 32));
+        (!('emergencyContact' in data) || (data.emergencyContact is string && data.emergencyContact.size() <= 32)) &&
+        (!('inviteCode' in data) || isValidInviteCode(data.inviteCode));
+    }
+
+    function isValidFamilyInvite(data) {
+      return data.keys().hasAll(['familyId', 'familyName', 'createdBy', 'createdAt']) &&
+        data.keys().hasOnly(['familyId', 'familyName', 'createdBy', 'createdAt']) &&
+        data.familyId is string && isValidId(data.familyId) &&
+        data.familyName is string && data.familyName.size() >= 1 && data.familyName.size() <= 80 &&
+        data.createdBy is string && isValidId(data.createdBy) &&
+        data.createdAt is timestamp;
     }
 
     function isValidFamilyMember(data) {
@@ -200,9 +209,30 @@ service cloud.firestore {
       allow delete: if isValidId(uid) && isOwner(uid);
     }
 
+    // Family invite lookup (get only by exact invite code; list strictly denied)
+    match /familyInvites/{inviteCode} {
+      allow get: if isValidInviteCode(inviteCode) && isVerifiedUser();
+      allow list: if false;
+      allow create: if isValidInviteCode(inviteCode) && isVerifiedUser() &&
+        isValidFamilyInvite(incoming()) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        exists(/databases/$(database)/documents/families/$(incoming().familyId)) &&
+        get(/databases/$(database)/documents/families/$(incoming().familyId)).data.createdBy == request.auth.uid;
+      allow update: if isValidInviteCode(inviteCode) && isVerifiedUser() &&
+        existing().createdBy == request.auth.uid &&
+        isValidFamilyInvite(incoming()) &&
+        incoming().familyId == existing().familyId &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['familyName']);
+      allow delete: if isValidInviteCode(inviteCode) && isVerifiedUser() &&
+        existing().createdBy == request.auth.uid;
+    }
+
     // Family root document
     match /families/{familyId} {
-      allow get: if isValidId(familyId) && isVerifiedUser() && request.auth.uid in existing().memberUids;
+      allow get: if isValidId(familyId) && isVerifiedUser() && (resource == null || request.auth.uid in existing().memberUids);
       allow list: if isVerifiedUser() && request.auth.uid in existing().memberUids;
       allow create: if isValidId(familyId) && isVerifiedUser() &&
         isValidFamily(incoming()) &&
@@ -210,17 +240,38 @@ service cloud.firestore {
         request.auth.uid in incoming().memberUids &&
         incoming().createdAt == request.time;
       allow update: if isValidId(familyId) && isVerifiedUser() &&
-        existing().createdBy == request.auth.uid &&
         isValidFamily(incoming()) &&
         incoming().createdBy == existing().createdBy &&
         incoming().createdAt == existing().createdAt &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['familyName', 'emergencyContact', 'memberUids']);
+        (
+          (
+            existing().createdBy == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['familyName', 'emergencyContact', 'memberUids', 'inviteCode'])
+          ) ||
+          (
+            !(request.auth.uid in existing().memberUids) &&
+            ('inviteCode' in existing()) &&
+            exists(/databases/$(database)/documents/familyInvites/$(existing().inviteCode)) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['memberUids']) &&
+            incoming().memberUids.size() == existing().memberUids.size() + 1 &&
+            request.auth.uid in incoming().memberUids &&
+            incoming().memberUids.hasAll(existing().memberUids)
+          ) ||
+          (
+            (request.auth.uid in existing().memberUids) &&
+            existing().createdBy != request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['memberUids']) &&
+            incoming().memberUids.size() == existing().memberUids.size() - 1 &&
+            !(request.auth.uid in incoming().memberUids) &&
+            existing().memberUids.hasAll(incoming().memberUids)
+          )
+        );
       allow delete: if isValidId(familyId) && isVerifiedUser() && existing().createdBy == request.auth.uid;
 
       // Members subcollection
       match /members/{memberId} {
         allow get: if isValidId(familyId) && isValidId(memberId) && isFamilyMember(familyId);
-        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow list: if isVerifiedUser() && (existing().ownerUid == request.auth.uid || isFamilyMember(familyId));
         allow create: if isValidId(familyId) && isValidId(memberId) &&
           isValidFamilyMember(incoming()) &&
           incoming().ownerUid == request.auth.uid &&
@@ -239,7 +290,7 @@ service cloud.firestore {
       // Health Records subcollection
       match /healthRecords/{recordId} {
         allow get: if isValidId(familyId) && isValidId(recordId) && isFamilyMember(familyId);
-        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow list: if isVerifiedUser() && (existing().ownerUid == request.auth.uid || isFamilyMember(familyId));
         allow create: if isValidId(familyId) && isValidId(recordId) &&
           isValidHealthRecord(incoming()) &&
           incoming().ownerUid == request.auth.uid &&
@@ -257,7 +308,7 @@ service cloud.firestore {
       // Medicines subcollection
       match /medicines/{medicineId} {
         allow get: if isValidId(familyId) && isValidId(medicineId) && isFamilyMember(familyId);
-        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow list: if isVerifiedUser() && (existing().ownerUid == request.auth.uid || isFamilyMember(familyId));
         allow create: if isValidId(familyId) && isValidId(medicineId) &&
           isValidMedicine(incoming()) &&
           incoming().ownerUid == request.auth.uid &&
@@ -278,7 +329,7 @@ service cloud.firestore {
       // Medicine Logs subcollection
       match /medicineLogs/{logId} {
         allow get: if isValidId(familyId) && isValidId(logId) && isFamilyMember(familyId);
-        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow list: if isVerifiedUser() && (existing().ownerUid == request.auth.uid || isFamilyMember(familyId));
         allow create: if isValidId(familyId) && isValidId(logId) &&
           isValidMedicineLog(incoming()) &&
           incoming().ownerUid == request.auth.uid &&
@@ -291,7 +342,7 @@ service cloud.firestore {
       // Meal Plans subcollection
       match /mealPlans/{dateId} {
         allow get: if isValidId(familyId) && isValidId(dateId) && isFamilyMember(familyId);
-        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow list: if isVerifiedUser() && (existing().ownerUid == request.auth.uid || isFamilyMember(familyId));
         allow create: if isValidId(familyId) && isValidId(dateId) &&
           isValidMealPlan(incoming(), dateId) &&
           incoming().ownerUid == request.auth.uid &&
@@ -309,7 +360,7 @@ service cloud.firestore {
       // Grocery List subcollection
       match /grocery/{itemId} {
         allow get: if isValidId(familyId) && isValidId(itemId) && isFamilyMember(familyId);
-        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow list: if isVerifiedUser() && (existing().ownerUid == request.auth.uid || isFamilyMember(familyId));
         allow create: if isValidId(familyId) && isValidId(itemId) &&
           isValidGroceryItem(incoming()) &&
           incoming().ownerUid == request.auth.uid &&
@@ -330,7 +381,7 @@ service cloud.firestore {
       // AI Insights subcollection
       match /aiInsights/{memberId} {
         allow get: if isValidId(familyId) && isValidId(memberId) && isFamilyMember(familyId);
-        allow list: if isVerifiedUser() && existing().ownerUid == request.auth.uid;
+        allow list: if isVerifiedUser() && (existing().ownerUid == request.auth.uid || isFamilyMember(familyId));
         allow create: if isValidId(familyId) && isValidId(memberId) &&
           isValidAiInsight(incoming(), memberId) &&
           incoming().ownerUid == request.auth.uid &&
@@ -354,16 +405,16 @@ service cloud.firestore {
         isValidEmergencyCard(incoming()) &&
         incoming().ownerUid == request.auth.uid &&
         incoming().updatedAt == request.time &&
-        isFamilyOwner(incoming().familyId);
+        isFamilyMember(incoming().familyId);
       allow update: if isValidId(cardId) && cardId.size() >= 8 &&
         isValidEmergencyCard(incoming()) &&
         incoming().ownerUid == existing().ownerUid &&
         incoming().familyId == existing().familyId &&
         incoming().memberId == existing().memberId &&
         incoming().updatedAt == request.time &&
-        isFamilyOwner(existing().familyId) &&
+        isFamilyMember(existing().familyId) &&
         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'age', 'gender', 'bloodGroup', 'allergies', 'conditions', 'emergencyContact', 'activeMedicines', 'updatedAt']);
-      allow delete: if isValidId(cardId) && isFamilyOwner(existing().familyId);
+      allow delete: if isValidId(cardId) && isFamilyMember(existing().familyId);
     }
   }
 }

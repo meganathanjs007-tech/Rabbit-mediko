@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { AppShell } from '../components/BottomNav';
 import { HealthWarningModal } from '../components/HealthWarningModal';
 import { useFamily } from '../hooks/useFamily';
-import { db, handleFirestoreError, OperationType } from '../services/firebase';
+import { db, getFriendlyFirebaseError } from '../services/firebase';
 import { quickAddFoods } from '../services/foodData';
 import { fetchMealSuggestions, type SuggestedMeal } from '../services/gemini';
 import type { MealSlot, MealWarning } from '../types/health';
@@ -17,7 +17,7 @@ import { getT } from '../utils/i18n';
 const SLOTS: MealSlot[] = ['breakfast', 'lunch', 'dinner', 'snacks'];
 
 export default function MealPlanner() {
-  const { family, members, mealPlans, language } = useFamily();
+  const { user, family, members, mealPlans, language } = useFamily();
   const t = getT(language);
 
   const weekDates = useMemo(() => getWeekDates(getTodayISO()), []);
@@ -40,7 +40,7 @@ export default function MealPlanner() {
     }
 
     const updatedPlan = {
-      ownerUid: family.createdBy,
+      ownerUid: existing?.ownerUid ?? user?.uid ?? family.createdBy,
       date: dateISO,
       breakfast: existing?.breakfast ?? [],
       lunch: existing?.lunch ?? [],
@@ -55,7 +55,7 @@ export default function MealPlanner() {
       toast.success(`${dish} added!`);
       setFoodInput('');
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `families/${family.id}/mealPlans/${dateISO}`);
+      toast.error(getFriendlyFirebaseError(err, language));
     }
   };
 
@@ -81,7 +81,7 @@ export default function MealPlanner() {
     const nextSlot = existing[slot].filter((_, idx) => idx !== dishIndex);
     try {
       await setDoc(doc(db, 'families', family.id, 'mealPlans', dateISO), {
-        ownerUid: family.createdBy,
+        ownerUid: existing.ownerUid || user?.uid || family.createdBy,
         date: dateISO,
         breakfast: existing.breakfast ?? [],
         lunch: existing.lunch ?? [],
@@ -92,7 +92,7 @@ export default function MealPlanner() {
       });
       toast.success(language === 'ta' ? 'உணவு நீக்கப்பட்டது' : 'Dish removed');
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `families/${family.id}/mealPlans/${dateISO}`);
+      toast.error(getFriendlyFirebaseError(err, language));
     }
   };
 
@@ -262,7 +262,7 @@ export default function MealPlanner() {
                   value={foodInput}
                   onChange={(e) => setFoodInput(e.target.value)}
                   placeholder={t.meals.addFoodPlaceholder}
-                  className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600"
+                  className="min-w-0 flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600"
                 />
                 <button
                   type="submit"

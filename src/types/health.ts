@@ -28,6 +28,14 @@ export interface Family {
   createdBy: string;
   memberUids: string[];
   emergencyContact?: string;
+  inviteCode?: string;
+  createdAt?: unknown;
+}
+
+export interface FamilyInvite {
+  familyId: string;
+  familyName: string;
+  createdBy: string;
   createdAt?: unknown;
 }
 

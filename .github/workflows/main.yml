@@ -51,6 +51,14 @@ jobs:
       - name: Add Android Platform
         run: npx cap add android
 
+      - name: Apply Rabbit Mediko App Icon
+        run: |
+          for dir in android/app/src/main/res/mipmap-*; do
+            [ -f "$dir/ic_launcher.png" ] && cp public/pwa-192x192.png "$dir/ic_launcher.png" || true
+            [ -f "$dir/ic_launcher_round.png" ] && cp public/pwa-192x192.png "$dir/ic_launcher_round.png" || true
+            [ -f "$dir/ic_launcher_foreground.png" ] && cp public/pwa-512x512.png "$dir/ic_launcher_foreground.png" || true
+          done
+
       - name: Sync Android
         run: npx cap sync android
 

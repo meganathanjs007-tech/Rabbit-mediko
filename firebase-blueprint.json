@@ -22,8 +22,9 @@
       "properties": {
         "familyName": { "type": "string", "minLength": 1, "maxLength": 80 },
         "createdBy": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "memberUids": { "type": "array", "description": "Authorized user UIDs (max 10)." },
+        "memberUids": { "type": "array", "description": "Authorized user UIDs (max 25)." },
         "emergencyContact": { "type": "string", "minLength": 0, "maxLength": 32 },
+        "inviteCode": { "type": "string", "minLength": 6, "maxLength": 12, "pattern": "^[A-Z0-9]+$" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["familyName", "createdBy", "memberUids", "createdAt"]
@@ -154,6 +155,18 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["familyId", "ownerUid", "memberId", "name", "age", "gender", "bloodGroup", "allergies", "conditions", "activeMedicines", "updatedAt"]
+    },
+    "FamilyInvite": {
+      "title": "FamilyInvite",
+      "description": "Lookup index mapping a shareable family invite code to a familyId.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "familyName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyId", "familyName", "createdBy", "createdAt"]
     }
   },
   "firestore": {
@@ -163,7 +176,11 @@
     },
     "/families/{familyId}": {
       "schema": "Family",
-      "description": "Family root document containing familyName, creator, and authorized memberUids."
+      "description": "Family root document containing familyName, creator, inviteCode, and authorized memberUids."
+    },
+    "/familyInvites/{inviteCode}": {
+      "schema": "FamilyInvite",
+      "description": "Invite code lookup document (get only by exact code, list denied)."
     },
     "/families/{familyId}/members/{memberId}": {
       "schema": "FamilyMember",

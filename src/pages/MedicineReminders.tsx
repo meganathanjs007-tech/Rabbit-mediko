@@ -1,19 +1,25 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { deleteDoc, doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
-import { AlertTriangle, Bell, BellRing, Check, Pill, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Bell, BellRing, Check, Pill, Plus, Send, Trash2, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import { AppShell } from '../components/BottomNav';
 import { EmptyState } from '../components/EmptyState';
 import { useFamily } from '../hooks/useFamily';
-import { db, handleFirestoreError, OperationType } from '../services/firebase';
+import { db, getFriendlyFirebaseError } from '../services/firebase';
 import type { Medicine, MedicineFrequency } from '../types/health';
 import { getDaysUntilDate } from '../utils/healthRules';
 import { generateSecureId, getTodayISO } from '../utils/helpers';
 import { getT } from '../utils/i18n';
+import {
+  getNotificationPermission,
+  requestAppNotificationPermission,
+  showMedicineNotification,
+  type AppNotificationPermission,
+} from '../utils/notifications';
 
 export default function MedicineReminders() {
-  const { family, members, medicines, medicineLogs, syncEmergencyCard, language } = useFamily();
+  const { user, family, members, medicines, medicineLogs, syncEmergencyCard, language } = useFamily();
   const t = getT(language);
   const todayISO = getTodayISO();
 
@@ -27,8 +33,8 @@ export default function MedicineReminders() {
   const [endDate, setEndDate] = useState('');
   const [expiryDate, setExpiryDate] = useState('');
   const [saving, setSaving] = useState(false);
-  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
-    typeof Notification !== 'undefined' ? Notification.permission : 'default'
+  const [notifPermission, setNotifPermission] = useState<AppNotificationPermission>(() =>
+    getNotificationPermission()
   );
 
   useEffect(() => {
@@ -44,33 +50,45 @@ export default function MedicineReminders() {
     if (freq === 'Thrice') setTimes(['08:00', '14:00', '20:00']);
   };
 
-  // Browser Notification scheduler check every minute
-  useEffect(() => {
-    if (typeof Notification === 'undefined' || notifPermission !== 'granted') return;
-    const timer = setInterval(() => {
-      const now = new Date();
-      const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      medicines
-        .filter((m) => m.active && m.times.includes(hhmm))
-        .forEach((m) => {
-          const member = members.find((mem) => mem.id === m.memberId);
-          new Notification(`Rabbit Mediko · ${member?.name ?? 'Medicine'}`, {
-            body: `Time for ${m.name} (${m.dosage})`,
-          });
-        });
-    }, 60000);
-    return () => clearInterval(timer);
-  }, [notifPermission, medicines, members]);
-
   const requestNotificationPermission = async () => {
-    if (typeof Notification === 'undefined') {
-      toast.error('Browser notifications are not supported in this browser.');
-      return;
-    }
-    const perm = await Notification.requestPermission();
+    const perm = await requestAppNotificationPermission();
     setNotifPermission(perm);
     if (perm === 'granted') {
       toast.success(t.medicines.notificationsEnabled);
+      await showMedicineNotification({
+        title: 'Rabbit Mediko',
+        body:
+          language === 'ta'
+            ? 'மருந்து நினைவூட்டல்கள் இயக்கப்பட்டுள்ளன!'
+            : 'Medicine reminders are enabled across the app!',
+        tag: 'rm-enabled',
+        url: '/medicines',
+        withToast: false,
+      });
+    } else if (perm === 'denied') {
+      toast.error(
+        language === 'ta'
+          ? 'உலாவி அமைப்புகளில் Notifications அனுமதிக்கவும்.'
+          : 'Notifications are blocked in your browser site settings.'
+      );
+    } else if (perm === 'unsupported') {
+      toast('OS push is unsupported in this view; sound & in-app alerts remain active.', { duration: 4000 });
+    }
+  };
+
+  const handleSendTest = async () => {
+    const result = await showMedicineNotification({
+      title: 'Rabbit Mediko · Test Reminder',
+      body:
+        language === 'ta'
+          ? 'சோதனை மருந்து நினைவூட்டல் வெற்றிகரமாக இயங்குகிறது!'
+          : 'Your medicine reminder alert & chime are working!',
+      tag: `rm-test-${Date.now()}`,
+      url: '/medicines',
+      withToast: true,
+    });
+    if (!result.deliveredOs && notifPermission !== 'granted') {
+      toast('Enable notifications to also receive lock-screen alerts.', { duration: 3500 });
     }
   };
 
@@ -79,16 +97,22 @@ export default function MedicineReminders() {
     if (!family || !memberId || !name.trim()) return;
 
     setSaving(true);
+    const actorUid = user?.uid ?? family.createdBy;
     const medId = generateSecureId('med');
+    const cleanName = name.trim().slice(0, 120);
+    const cleanDosage = (dosage.trim() || '1 Tablet').slice(0, 60);
+    const cleanTimes = times.filter(Boolean).slice(0, 6);
+    if (cleanTimes.length === 0) cleanTimes.push('08:00');
+
     const newMed: Medicine = {
       id: medId,
-      ownerUid: family.createdBy,
+      ownerUid: actorUid,
       memberId,
-      name: name.trim(),
-      dosage: dosage.trim() || '1 Tablet',
+      name: cleanName,
+      dosage: cleanDosage,
       frequency,
-      times: times.filter(Boolean),
-      startDate,
+      times: cleanTimes,
+      startDate: startDate || todayISO,
       ...(endDate ? { endDate } : {}),
       ...(expiryDate ? { expiryDate } : {}),
       active: true,
@@ -96,7 +120,7 @@ export default function MedicineReminders() {
 
     try {
       await setDoc(doc(db, 'families', family.id, 'medicines', medId), {
-        ownerUid: family.createdBy,
+        ownerUid: actorUid,
         memberId: newMed.memberId,
         name: newMed.name,
         dosage: newMed.dosage,
@@ -118,7 +142,7 @@ export default function MedicineReminders() {
       setName('');
       setModalOpen(false);
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `families/${family.id}/medicines/${medId}`);
+      toast.error(getFriendlyFirebaseError(err, language));
     } finally {
       setSaving(false);
     }
@@ -137,7 +161,7 @@ export default function MedicineReminders() {
       }
       toast.success(!med.active ? 'Reminder activated' : 'Reminder paused');
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `families/${family.id}/medicines/${med.id}`);
+      toast.error(getFriendlyFirebaseError(err, language));
     }
   };
 
@@ -152,7 +176,7 @@ export default function MedicineReminders() {
       }
       toast.success('Medicine removed');
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `families/${family.id}/medicines/${med.id}`);
+      toast.error(getFriendlyFirebaseError(err, language));
     }
   };
 
@@ -168,7 +192,7 @@ export default function MedicineReminders() {
         await deleteDoc(ref);
       } else {
         await setDoc(ref, {
-          ownerUid: family.createdBy,
+          ownerUid: user?.uid ?? family.createdBy,
           medicineId: med.id,
           memberId: med.memberId,
           date: todayISO,
@@ -178,14 +202,16 @@ export default function MedicineReminders() {
         toast.success(`${med.name} (${slotTime}) taken!`);
       }
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `families/${family.id}/medicineLogs/${logId}`);
+      toast.error(getFriendlyFirebaseError(err, language));
     }
   };
 
   const { totalDoses, takenDoses } = useMemo(() => {
     let total = 0;
     let taken = 0;
-    for (const med of medicines.filter((m) => m.active)) {
+    for (const med of medicines.filter(
+      (m) => m.active && (!m.startDate || m.startDate <= todayISO) && (!m.endDate || m.endDate >= todayISO)
+    )) {
       for (const slotTime of med.times) {
         total += 1;
         const sanitizedTime = slotTime.replace(/[^a-zA-Z0-9]/g, '');
@@ -206,12 +232,12 @@ export default function MedicineReminders() {
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.2 }}
-        className="space-y-6"
+        transition={{ duration: 0.18 }}
+        className="w-full min-w-0 space-y-6"
       >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <h1 className="text-2xl font-bold text-slate-900">{t.medicines.title}</h1>
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => void requestNotificationPermission()}
@@ -219,40 +245,52 @@ export default function MedicineReminders() {
             >
               {notifPermission === 'granted' ? (
                 <>
-                  <BellRing className="w-4 h-4 text-emerald-600" />
+                  <BellRing className="w-4 h-4 text-emerald-600 shrink-0" />
                   <span>{t.medicines.notificationsEnabled}</span>
                 </>
               ) : (
                 <>
-                  <Bell className="w-4 h-4 text-slate-500" />
+                  <Bell className="w-4 h-4 text-slate-500 shrink-0" />
                   <span>{t.medicines.enableNotifications}</span>
                 </>
               )}
             </button>
             <button
               type="button"
+              onClick={() => void handleSendTest()}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 min-h-[44px] cursor-pointer"
+            >
+              <Send className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <span>{language === 'ta' ? 'சோதனை' : 'Test Alert'}</span>
+            </button>
+            <button
+              type="button"
               onClick={() => setModalOpen(true)}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 min-h-[44px] cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4 shrink-0" />
               <span>{t.medicines.addMedicine}</span>
             </button>
           </div>
         </div>
 
+        {notifPermission === 'denied' && (
+          <div className="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-900 flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              {language === 'ta'
+                ? 'உலாவியில் Notifications தடுக்கப்பட்டுள்ளது; எனினும் செயலியில் ஒலி மற்றும் திரை நினைவூட்டல்கள் இயங்கும்.'
+                : 'Browser notifications are blocked in site settings. In-app banners and chime alerts remain active while using Rabbit Mediko.'}
+            </span>
+          </div>
+        )}
+
         {/* Today's Progress Ring Banner */}
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex items-center justify-between gap-6">
-          <div className="flex items-center gap-5">
+          <div className="flex items-center gap-4 sm:gap-5 min-w-0">
             <div className="relative w-20 h-20 flex items-center justify-center shrink-0">
               <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
-                <circle
-                  cx="40"
-                  cy="40"
-                  r={radius}
-                  stroke="#E2E8F0"
-                  strokeWidth="7"
-                  fill="none"
-                />
+                <circle cx="40" cy="40" r={radius} stroke="#E2E8F0" strokeWidth="7" fill="none" />
                 <circle
                   cx="40"
                   cy="40"
@@ -270,7 +308,7 @@ export default function MedicineReminders() {
                 {pct}%
               </span>
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1 min-w-0">
               <h2 className="text-base font-semibold text-slate-900">{t.medicines.todayProgress}</h2>
               <p className="text-sm text-slate-600 font-mono tabular-nums">
                 {takenDoses} of {totalDoses} scheduled doses taken today
@@ -294,7 +332,7 @@ export default function MedicineReminders() {
               const memMeds = medicines.filter((m) => m.memberId === member.id);
               if (memMeds.length === 0) return null;
               return (
-                <section key={member.id} className="space-y-3">
+                <section key={member.id} className="space-y-3 min-w-0">
                   <h3 className="text-sm font-bold text-slate-700">
                     {member.name} · {memMeds.length} {memMeds.length === 1 ? 'prescription' : 'prescriptions'}
                   </h3>
@@ -306,18 +344,18 @@ export default function MedicineReminders() {
                       return (
                         <div
                           key={med.id}
-                          className={`bg-white border rounded-2xl p-5 shadow-sm space-y-4 ${
+                          className={`bg-white border rounded-2xl p-5 shadow-sm space-y-4 min-w-0 ${
                             !med.active ? 'border-slate-200 opacity-70' : 'border-slate-200'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-3">
-                            <div className="space-y-0.5">
-                              <h4 className="text-base font-bold text-slate-900">{med.name}</h4>
+                            <div className="space-y-0.5 min-w-0">
+                              <h4 className="text-base font-bold text-slate-900 truncate">{med.name}</h4>
                               <p className="text-xs text-slate-500">
                                 {med.dosage} · {med.frequency} daily
                               </p>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 shrink-0">
                               <button
                                 type="button"
                                 onClick={() => void toggleActive(med)}
@@ -427,10 +465,11 @@ export default function MedicineReminders() {
                     <input
                       type="text"
                       required
+                      maxLength={120}
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="e.g. Metformin 500mg"
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm"
+                      className="w-full min-w-0 px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm"
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -438,10 +477,11 @@ export default function MedicineReminders() {
                     <input
                       type="text"
                       required
+                      maxLength={60}
                       value={dosage}
                       onChange={(e) => setDosage(e.target.value)}
                       placeholder="1 Tablet"
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm"
+                      className="w-full min-w-0 px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm"
                     />
                   </div>
                 </div>
@@ -477,7 +517,7 @@ export default function MedicineReminders() {
                           next[idx] = e.target.value;
                           setTimes(next);
                         }}
-                        className="px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-mono"
+                        className="w-full min-w-0 px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-mono"
                         required
                       />
                     ))}
@@ -491,7 +531,7 @@ export default function MedicineReminders() {
                       type="date"
                       value={startDate}
                       onChange={(e) => setStartDate(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono"
+                      className="w-full min-w-0 px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono"
                       required
                     />
                   </div>
@@ -501,7 +541,7 @@ export default function MedicineReminders() {
                       type="date"
                       value={expiryDate}
                       onChange={(e) => setExpiryDate(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono"
+                      className="w-full min-w-0 px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono"
                     />
                   </div>
                 </div>
@@ -512,7 +552,7 @@ export default function MedicineReminders() {
                     type="date"
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono"
+                    className="w-full min-w-0 px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono"
                   />
                 </div>
 

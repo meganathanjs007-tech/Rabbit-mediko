@@ -7,13 +7,13 @@ import { AppShell } from '../components/BottomNav';
 import { EmptyState } from '../components/EmptyState';
 import { MemberSelector } from '../components/MemberSelector';
 import { useFamily } from '../hooks/useFamily';
-import { db, handleFirestoreError, OperationType } from '../services/firebase';
+import { db } from '../services/firebase';
 import { fetchHealthInsights } from '../services/gemini';
 import { addDaysISO, getTodayISO } from '../utils/helpers';
 import { getT } from '../utils/i18n';
 
 export default function AIInsights() {
-  const { family, members, healthRecords, medicines, mealPlans, aiInsights, language } = useFamily();
+  const { user, family, members, healthRecords, medicines, mealPlans, aiInsights, language } = useFamily();
   const t = getT(language);
 
   const [selectedId, setSelectedId] = useState('');
@@ -47,6 +47,7 @@ export default function AIInsights() {
       .map((r) => ({ date: r.date, value: r.value }));
 
     const recentMeals = Object.values(mealPlans)
+      .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, 7)
       .map((p) => ({
         date: p.date,
@@ -73,14 +74,19 @@ export default function AIInsights() {
         language,
       });
 
-      await setDoc(doc(db, 'families', family.id, 'aiInsights', activeMember.id), {
-        ownerUid: family.createdBy,
-        memberId: activeMember.id,
-        analysis: (result.analysis || 'No analysis available').slice(0, 6000),
-        foodPatterns: (result.foodPatterns || '').slice(0, 4000),
-        language,
-        timestamp: serverTimestamp(),
-      });
+      const docRef = doc(db, 'families', family.id, 'aiInsights', activeMember.id);
+      try {
+        await setDoc(docRef, {
+          ownerUid: cachedInsight?.ownerUid ?? user?.uid ?? family.createdBy,
+          memberId: activeMember.id,
+          analysis: (result.analysis || 'No analysis available').slice(0, 6000),
+          foodPatterns: (result.foodPatterns || '').slice(0, 4000),
+          language,
+          timestamp: serverTimestamp(),
+        });
+      } catch (fsErr) {
+        console.warn('Could not save cached AI insight to Firestore:', fsErr);
+      }
 
       toast.success(language === 'ta' ? 'AI ஆலோசனை தயார்!' : 'AI health insights updated!');
     } catch (err: unknown) {
@@ -98,7 +104,7 @@ export default function AIInsights() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.2 }}
-        className="space-y-6"
+        className="w-full min-w-0 space-y-6"
       >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
@@ -115,7 +121,9 @@ export default function AIInsights() {
               <Sparkles className="w-4 h-4" />
               <span>
                 {loading
-                  ? 'Analyzing...'
+                  ? language === 'ta'
+                    ? 'ஆய்வு செய்கிறது...'
+                    : 'Analyzing...'
                   : cachedInsight
                     ? t.insights.reanalyzeBtn
                     : t.insights.analyzeBtn}
@@ -148,18 +156,28 @@ export default function AIInsights() {
         )}
 
         {loading ? (
-          <div className="grid lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-6 space-y-4 animate-pulse">
-              <div className="h-5 w-48 bg-slate-200 rounded-lg" />
-              <div className="h-4 w-full bg-slate-100 rounded-lg" />
-              <div className="h-4 w-5/6 bg-slate-100 rounded-lg" />
-              <div className="h-4 w-4/5 bg-slate-100 rounded-lg" />
-              <div className="h-4 w-2/3 bg-slate-100 rounded-lg" />
+          <div className="space-y-4">
+            <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl px-4 py-3 text-xs font-medium text-emerald-800 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 animate-pulse text-emerald-600 shrink-0" />
+              <span>
+                {language === 'ta'
+                  ? `${activeMember?.name ?? ''} உடல்நல பதிவுகள், உணவு மற்றும் மருந்துகளை ஆய்வு செய்கிறது...`
+                  : `Analyzing ${activeMember?.name ?? 'member'}'s vitals, meals, and active medicines...`}
+              </span>
             </div>
-            <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-6 space-y-4 animate-pulse">
-              <div className="h-5 w-40 bg-slate-200 rounded-lg" />
-              <div className="h-4 w-full bg-slate-100 rounded-lg" />
-              <div className="h-4 w-3/4 bg-slate-100 rounded-lg" />
+            <div className="grid lg:grid-cols-12 gap-6">
+              <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-6 space-y-4 animate-pulse">
+                <div className="h-5 w-48 bg-slate-200 rounded-lg" />
+                <div className="h-4 w-full bg-slate-100 rounded-lg" />
+                <div className="h-4 w-5/6 bg-slate-100 rounded-lg" />
+                <div className="h-4 w-4/5 bg-slate-100 rounded-lg" />
+                <div className="h-4 w-2/3 bg-slate-100 rounded-lg" />
+              </div>
+              <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-6 space-y-4 animate-pulse">
+                <div className="h-5 w-40 bg-slate-200 rounded-lg" />
+                <div className="h-4 w-full bg-slate-100 rounded-lg" />
+                <div className="h-4 w-3/4 bg-slate-100 rounded-lg" />
+              </div>
             </div>
           </div>
         ) : !activeMember ? (
@@ -178,27 +196,27 @@ export default function AIInsights() {
           />
         ) : (
           <div className="grid lg:grid-cols-12 gap-6 items-start">
-            <section className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+            <section className="lg:col-span-7 min-w-0 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
                     <Sparkles className="w-5 h-5" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <h2 className="text-base font-bold text-slate-900">{t.insights.analysisTitle}</h2>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-slate-500 truncate">
                       {activeMember.name} · {activeMember.conditions.join(', ')}
                     </p>
                   </div>
                 </div>
               </div>
 
-              <div className="text-sm text-slate-800 leading-relaxed whitespace-pre-line">
+              <div className="text-sm text-slate-800 leading-relaxed whitespace-pre-line break-words">
                 {cachedInsight.analysis}
               </div>
             </section>
 
-            <section className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+            <section className="lg:col-span-5 min-w-0 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
               <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
                 <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center">
                   <Utensils className="w-5 h-5" />

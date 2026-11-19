@@ -1,23 +1,24 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
   deleteDoc,
   doc,
   getDoc,
   onSnapshot,
-  query,
   serverTimestamp,
   setDoc,
   updateDoc,
-  where,
   writeBatch,
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../services/firebase';
-import { generateSecureId } from '../utils/helpers';
+import { generateInviteCode, generateSecureId } from '../utils/helpers';
 import type {
   AiInsight,
   Family,
+  FamilyInvite,
   FamilyMember,
   GroceryItem,
   HealthRecord,
@@ -27,6 +28,15 @@ import type {
   MedicineLog,
   UserProfile,
 } from '../types/health';
+
+export interface MemberInput {
+  name: string;
+  age: number;
+  gender: 'M' | 'F' | 'Other';
+  bloodGroup: FamilyMember['bloodGroup'];
+  allergies: string[];
+  conditions: string[];
+}
 
 interface FamilyContextValue {
   user: User | null;
@@ -47,30 +57,47 @@ interface FamilyContextValue {
   saveFamilySetup: (params: {
     familyName: string;
     emergencyContact: string;
-    members: Array<{
-      name: string;
-      age: number;
-      gender: 'M' | 'F' | 'Other';
-      bloodGroup: FamilyMember['bloodGroup'];
-      allergies: string[];
-      conditions: string[];
-    }>;
-  }) => Promise<string>;
-  addFamilyMember: (member: {
-    name: string;
-    age: number;
-    gender: 'M' | 'F' | 'Other';
-    bloodGroup: FamilyMember['bloodGroup'];
-    allergies: string[];
-    conditions: string[];
-    emergencyContact?: string;
-  }) => Promise<void>;
+    members: MemberInput[];
+  }) => Promise<{ familyId: string; inviteCode: string }>;
+  lookupInviteCode: (
+    code: string
+  ) => Promise<{ code: string; familyId: string; familyName: string } | null>;
+  joinFamilyWithCode: (params: {
+    code: string;
+    member: MemberInput;
+  }) => Promise<{ familyId: string; familyName: string }>;
+  ensureInviteCode: (regenerate?: boolean) => Promise<string | null>;
+  leaveFamily: () => Promise<void>;
+  addFamilyMember: (member: MemberInput & { emergencyContact?: string }) => Promise<void>;
   updateFamilyDetails: (familyName: string, emergencyContact: string) => Promise<void>;
   syncEmergencyCard: (member: FamilyMember, overrideMeds?: Medicine[]) => Promise<void>;
   deleteFamilyWorkspace: () => Promise<void>;
 }
 
 const FamilyContext = createContext<FamilyContextValue | undefined>(undefined);
+
+function normalizeInviteCode(code: string): string {
+  return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function sanitizeUserFields(user: User) {
+  const email = user.email?.trim().slice(0, 160);
+  const phone = user.phoneNumber?.trim().slice(0, 32);
+  const displayName = user.displayName?.trim().slice(0, 100);
+  return {
+    ...(email ? { email } : {}),
+    ...(phone ? { phone } : {}),
+    ...(displayName ? { displayName } : {}),
+  };
+}
+
+function sanitizeTags(tags: string[]): string[] {
+  const cleaned = tags
+    .map((item) => item.trim().slice(0, 40))
+    .filter(Boolean)
+    .slice(0, 15);
+  return cleaned.length > 0 ? cleaned : ['None'];
+}
 
 export function FamilyProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -93,7 +120,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
 
   // 1. Auth listener
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setAuthReady(true);
       if (!firebaseUser) {
@@ -127,13 +154,12 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
             await setDoc(userRef, {
               uid: user.uid,
               language: initialLang,
-              ...(user.email ? { email: user.email } : {}),
-              ...(user.phoneNumber ? { phone: user.phoneNumber } : {}),
-              ...(user.displayName ? { displayName: user.displayName } : {}),
+              ...sanitizeUserFields(user),
               createdAt: serverTimestamp(),
             });
           } catch (err) {
-            handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}`);
+            console.warn('Could not bootstrap user profile:', err);
+            setFamilyLoading(false);
           }
           return;
         }
@@ -149,7 +175,8 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
         }
       },
       (err) => {
-        handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
+        console.warn('User profile snapshot error:', err);
+        setFamilyLoading(false);
       }
     );
 
@@ -160,28 +187,38 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!authReady || !user || !userProfile?.familyId) return;
     const famId = userProfile.familyId;
+    setFamilyLoading(true);
     const famRef = doc(db, 'families', famId);
+
+    const clearStaleFamilyLink = () => {
+      setFamily(null);
+      setFamilyLoading(false);
+      updateDoc(doc(db, 'users', user.uid), { familyId: '' }).catch((clearErr) => {
+        console.warn('Could not clear stale familyId:', clearErr);
+      });
+    };
 
     const unsub = onSnapshot(
       famRef,
       (snap) => {
         if (snap.exists()) {
           setFamily({ id: snap.id, ...(snap.data() as Omit<Family, 'id'>) });
+          setFamilyLoading(false);
         } else {
-          setFamily(null);
+          // Family was deleted by creator -> recover gracefully to /setup
+          clearStaleFamilyLink();
         }
-        setFamilyLoading(false);
       },
       (err) => {
-        setFamilyLoading(false);
-        handleFirestoreError(err, OperationType.GET, `families/${famId}`);
+        console.warn('Family snapshot error:', err);
+        clearStaleFamilyLink();
       }
     );
 
     return () => unsub();
   }, [authReady, user, userProfile?.familyId]);
 
-  // 4. Subcollection real-time listeners (strictly gated on family & ownerUid)
+  // 4. Subcollection real-time listeners (shared across all family memberUids)
   useEffect(() => {
     if (!authReady || !user || !family) {
       setMembers([]);
@@ -194,48 +231,47 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     const famId = family.id;
-    const ownerUid = family.createdBy;
 
     const unsubMembers = onSnapshot(
-      query(collection(db, 'families', famId, 'members'), where('ownerUid', '==', ownerUid)),
+      collection(db, 'families', famId, 'members'),
       (snap) => {
         const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<FamilyMember, 'id'>) }));
         setMembers(list);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, `families/${famId}/members`)
+      (err) => console.warn('Members listener warning:', err)
     );
 
     const unsubRecords = onSnapshot(
-      query(collection(db, 'families', famId, 'healthRecords'), where('ownerUid', '==', ownerUid)),
+      collection(db, 'families', famId, 'healthRecords'),
       (snap) => {
         const list = snap.docs
           .map((d) => ({ id: d.id, ...(d.data() as Omit<HealthRecord, 'id'>) }))
           .sort((a, b) => b.date.localeCompare(a.date));
         setHealthRecords(list);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, `families/${famId}/healthRecords`)
+      (err) => console.warn('Health records listener warning:', err)
     );
 
     const unsubMeds = onSnapshot(
-      query(collection(db, 'families', famId, 'medicines'), where('ownerUid', '==', ownerUid)),
+      collection(db, 'families', famId, 'medicines'),
       (snap) => {
         const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Medicine, 'id'>) }));
         setMedicines(list);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, `families/${famId}/medicines`)
+      (err) => console.warn('Medicines listener warning:', err)
     );
 
     const unsubMedLogs = onSnapshot(
-      query(collection(db, 'families', famId, 'medicineLogs'), where('ownerUid', '==', ownerUid)),
+      collection(db, 'families', famId, 'medicineLogs'),
       (snap) => {
         const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<MedicineLog, 'id'>) }));
         setMedicineLogs(list);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, `families/${famId}/medicineLogs`)
+      (err) => console.warn('Medicine logs listener warning:', err)
     );
 
     const unsubMeals = onSnapshot(
-      query(collection(db, 'families', famId, 'mealPlans'), where('ownerUid', '==', ownerUid)),
+      collection(db, 'families', famId, 'mealPlans'),
       (snap) => {
         const map: Record<string, MealPlan> = {};
         snap.docs.forEach((d) => {
@@ -243,20 +279,20 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
         });
         setMealPlans(map);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, `families/${famId}/mealPlans`)
+      (err) => console.warn('Meal plans listener warning:', err)
     );
 
     const unsubGrocery = onSnapshot(
-      query(collection(db, 'families', famId, 'grocery'), where('ownerUid', '==', ownerUid)),
+      collection(db, 'families', famId, 'grocery'),
       (snap) => {
         const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<GroceryItem, 'id'>) }));
         setGroceryItems(list);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, `families/${famId}/grocery`)
+      (err) => console.warn('Grocery listener warning:', err)
     );
 
     const unsubInsights = onSnapshot(
-      query(collection(db, 'families', famId, 'aiInsights'), where('ownerUid', '==', ownerUid)),
+      collection(db, 'families', famId, 'aiInsights'),
       (snap) => {
         const map: Record<string, AiInsight> = {};
         snap.docs.forEach((d) => {
@@ -264,7 +300,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
         });
         setAiInsights(map);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, `families/${famId}/aiInsights`)
+      (err) => console.warn('AI insights listener warning:', err)
     );
 
     return () => {
@@ -291,14 +327,12 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
           await setDoc(userRef, {
             uid: user.uid,
             language: lang,
-            ...(user.email ? { email: user.email } : {}),
-            ...(user.phoneNumber ? { phone: user.phoneNumber } : {}),
-            ...(user.displayName ? { displayName: user.displayName } : {}),
+            ...sanitizeUserFields(user),
             createdAt: serverTimestamp(),
           });
         }
       } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
+        console.warn('Language preference sync warning:', err);
       }
     }
   };
@@ -311,25 +345,26 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     if (!user || !family) return;
     const activeMedList = (overrideMeds ?? medicines)
       .filter((m) => m.memberId === member.id && m.active)
-      .map((m) => `${m.name} (${m.dosage}, ${m.frequency})`);
+      .slice(0, 30)
+      .map((m) => `${m.name} (${m.dosage}, ${m.frequency})`.slice(0, 120));
 
     try {
       await setDoc(doc(db, 'emergencyCards', member.cardId), {
         familyId: family.id,
-        ownerUid: family.createdBy,
+        ownerUid: member.ownerUid || user.uid,
         memberId: member.id,
-        name: member.name,
-        age: member.age,
+        name: member.name.trim().slice(0, 80) || 'Member',
+        age: Math.min(130, Math.max(0, Number(member.age) || 0)),
         gender: member.gender,
         bloodGroup: member.bloodGroup,
-        allergies: member.allergies,
-        conditions: member.conditions,
-        emergencyContact: member.emergencyContact || family.emergencyContact || '',
+        allergies: sanitizeTags(member.allergies),
+        conditions: sanitizeTags(member.conditions),
+        emergencyContact: (member.emergencyContact || family.emergencyContact || '').trim().slice(0, 32),
         activeMedicines: activeMedList,
         updatedAt: serverTimestamp(),
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `emergencyCards/${member.cardId}`);
+      console.warn('Emergency card sync warning:', err);
     }
   };
 
@@ -340,13 +375,24 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   }) => {
     if (!user) throw new Error('User must be signed in.');
     const familyId = generateSecureId('fam');
+    const inviteCode = generateInviteCode();
+    const cleanFamilyName = (familyName.trim() || 'My Family').slice(0, 80);
+    const cleanContact = emergencyContact.trim().slice(0, 32);
 
     try {
       await setDoc(doc(db, 'families', familyId), {
-        familyName: familyName.trim().slice(0, 80),
+        familyName: cleanFamilyName,
         createdBy: user.uid,
         memberUids: [user.uid],
-        emergencyContact: emergencyContact.trim().slice(0, 32),
+        emergencyContact: cleanContact,
+        inviteCode,
+        createdAt: serverTimestamp(),
+      });
+
+      await setDoc(doc(db, 'familyInvites', inviteCode), {
+        familyId,
+        familyName: cleanFamilyName,
+        createdBy: user.uid,
         createdAt: serverTimestamp(),
       });
 
@@ -356,11 +402,10 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
         for (const m of chunk) {
           const memberId = generateSecureId('mem');
           const cardId = generateSecureId('card');
-          const cleanName = m.name.trim().slice(0, 80);
-          const cleanContact = emergencyContact.trim().slice(0, 32);
+          const cleanName = (m.name.trim() || 'Member').slice(0, 80);
           const cleanAge = Math.min(130, Math.max(0, Number(m.age) || 0));
-          const cleanAllergies = m.allergies.length > 0 ? m.allergies.slice(0, 15) : ['None'];
-          const cleanConditions = m.conditions.length > 0 ? m.conditions.slice(0, 15) : ['None'];
+          const cleanAllergies = sanitizeTags(m.allergies);
+          const cleanConditions = sanitizeTags(m.conditions);
 
           batch.set(doc(db, 'families', familyId, 'members', memberId), {
             ownerUid: user.uid,
@@ -402,16 +447,216 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
           uid: user.uid,
           familyId,
           language,
-          ...(user.email ? { email: user.email } : {}),
-          ...(user.phoneNumber ? { phone: user.phoneNumber } : {}),
-          ...(user.displayName ? { displayName: user.displayName } : {}),
+          ...sanitizeUserFields(user),
           createdAt: serverTimestamp(),
         });
       }
 
-      return familyId;
+      return { familyId, inviteCode };
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `families/${familyId}`);
+    }
+  };
+
+  const lookupInviteCode: FamilyContextValue['lookupInviteCode'] = async (rawCode) => {
+    const code = normalizeInviteCode(rawCode);
+    if (code.length < 6 || code.length > 12) return null;
+
+    try {
+      const snap = await getDoc(doc(db, 'familyInvites', code));
+      if (!snap.exists()) return null;
+      const data = snap.data() as FamilyInvite;
+      return {
+        code,
+        familyId: data.familyId,
+        familyName: data.familyName,
+      };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, `familyInvites/${code}`);
+    }
+  };
+
+  const joinFamilyWithCode: FamilyContextValue['joinFamilyWithCode'] = async ({ code: rawCode, member }) => {
+    if (!user) throw new Error('User must be signed in.');
+    const code = normalizeInviteCode(rawCode);
+    if (code.length < 6 || code.length > 12) {
+      throw new Error('Please enter a valid 6–12 character Family Invite Code.');
+    }
+
+    let inviteData: FamilyInvite | null = null;
+    try {
+      const inviteSnap = await getDoc(doc(db, 'familyInvites', code));
+      if (inviteSnap.exists()) {
+        inviteData = inviteSnap.data() as FamilyInvite;
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, `familyInvites/${code}`);
+    }
+
+    if (!inviteData) {
+      throw new Error('Invalid or expired Family Invite Code. Please check the code and try again.');
+    }
+
+    const { familyId, familyName } = inviteData;
+    const famRef = doc(db, 'families', familyId);
+
+    try {
+      try {
+        await updateDoc(famRef, { memberUids: arrayUnion(user.uid) });
+      } catch (joinErr) {
+        let existingFam;
+        try {
+          existingFam = await getDoc(famRef);
+        } catch {
+          throw new Error(
+            'Unable to join this family right now. The family may be full (max 25 accounts) or no longer exists.'
+          );
+        }
+        const existingUids = (existingFam.data()?.memberUids as string[] | undefined) ?? [];
+        if (!existingFam.exists()) {
+          throw new Error('This family workspace no longer exists.');
+        }
+        if (existingUids.length >= 25 && !existingUids.includes(user.uid)) {
+          throw new Error('This family workspace has reached its maximum limit of 25 linked accounts.');
+        }
+        if (!existingUids.includes(user.uid)) {
+          throw joinErr;
+        }
+      }
+
+      let defaultEmergencyContact = '';
+      try {
+        const famSnap = await getDoc(famRef);
+        if (famSnap.exists()) {
+          defaultEmergencyContact = ((famSnap.data()?.emergencyContact as string | undefined) ?? '')
+            .trim()
+            .slice(0, 32);
+        }
+      } catch {
+        // Non-critical fallback
+      }
+
+      const memberId = generateSecureId('mem');
+      const cardId = generateSecureId('card');
+      const cleanName = (member.name.trim() || 'Member').slice(0, 80);
+      const cleanAge = Math.min(130, Math.max(0, Number(member.age) || 0));
+      const cleanAllergies = sanitizeTags(member.allergies);
+      const cleanConditions = sanitizeTags(member.conditions);
+
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'families', familyId, 'members', memberId), {
+        ownerUid: user.uid,
+        name: cleanName,
+        age: cleanAge,
+        gender: member.gender,
+        bloodGroup: member.bloodGroup,
+        allergies: cleanAllergies,
+        conditions: cleanConditions,
+        emergencyContact: defaultEmergencyContact,
+        cardId,
+        createdAt: serverTimestamp(),
+      });
+
+      batch.set(doc(db, 'emergencyCards', cardId), {
+        familyId,
+        ownerUid: user.uid,
+        memberId,
+        name: cleanName,
+        age: cleanAge,
+        gender: member.gender,
+        bloodGroup: member.bloodGroup,
+        allergies: cleanAllergies,
+        conditions: cleanConditions,
+        emergencyContact: defaultEmergencyContact,
+        activeMedicines: [],
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+
+      const userRef = doc(db, 'users', user.uid);
+      const userSnap = await getDoc(userRef);
+      if (userSnap.exists()) {
+        await updateDoc(userRef, { familyId });
+      } else {
+        await setDoc(userRef, {
+          uid: user.uid,
+          familyId,
+          language,
+          ...sanitizeUserFields(user),
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      return { familyId, familyName };
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `families/${familyId}`);
+    }
+  };
+
+  const ensureInviteCode: FamilyContextValue['ensureInviteCode'] = async (regenerate = false) => {
+    if (!user || !family) return null;
+
+    if (family.inviteCode && !regenerate) {
+      try {
+        const existingInvite = await getDoc(doc(db, 'familyInvites', family.inviteCode));
+        if (existingInvite.exists()) {
+          return family.inviteCode;
+        }
+        if (user.uid === family.createdBy) {
+          await setDoc(doc(db, 'familyInvites', family.inviteCode), {
+            familyId: family.id,
+            familyName: family.familyName,
+            createdBy: user.uid,
+            createdAt: serverTimestamp(),
+          });
+        }
+      } catch {
+        // Return existing code even if verification hiccups
+      }
+      return family.inviteCode;
+    }
+
+    if (user.uid !== family.createdBy) {
+      return family.inviteCode ?? null;
+    }
+
+    const oldCode = family.inviteCode;
+    const newCode = generateInviteCode();
+    try {
+      await updateDoc(doc(db, 'families', family.id), { inviteCode: newCode });
+      await setDoc(doc(db, 'familyInvites', newCode), {
+        familyId: family.id,
+        familyName: family.familyName,
+        createdBy: user.uid,
+        createdAt: serverTimestamp(),
+      });
+      if (oldCode && oldCode !== newCode) {
+        try {
+          await deleteDoc(doc(db, 'familyInvites', oldCode));
+        } catch {
+          // Non-critical cleanup
+        }
+      }
+      return newCode;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `families/${family.id}`);
+    }
+  };
+
+  const leaveFamily = async () => {
+    if (!user || !family) return;
+    if (user.uid === family.createdBy) {
+      throw new Error('Family creator cannot leave; use Delete Family Workspace instead.');
+    }
+    const famId = family.id;
+    try {
+      await updateDoc(doc(db, 'families', famId), {
+        memberUids: arrayRemove(user.uid),
+      }).catch(() => {});
+      await updateDoc(doc(db, 'users', user.uid), { familyId: '' });
+      setFamily(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `families/${famId}`);
     }
   };
 
@@ -419,16 +664,16 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     if (!user || !family) throw new Error('Family not initialized');
     const memberId = generateSecureId('mem');
     const cardId = generateSecureId('card');
-    const cleanName = member.name.trim().slice(0, 80);
+    const cleanName = (member.name.trim() || 'Member').slice(0, 80);
     const cleanAge = Math.min(130, Math.max(0, Number(member.age) || 0));
     const contact = (member.emergencyContact ?? family.emergencyContact ?? '').trim().slice(0, 32);
-    const cleanAllergies = member.allergies.length > 0 ? member.allergies.slice(0, 15) : ['None'];
-    const cleanConditions = member.conditions.length > 0 ? member.conditions.slice(0, 15) : ['None'];
+    const cleanAllergies = sanitizeTags(member.allergies);
+    const cleanConditions = sanitizeTags(member.conditions);
 
     try {
       const batch = writeBatch(db);
       batch.set(doc(db, 'families', family.id, 'members', memberId), {
-        ownerUid: family.createdBy,
+        ownerUid: user.uid,
         name: cleanName,
         age: cleanAge,
         gender: member.gender,
@@ -442,7 +687,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
 
       batch.set(doc(db, 'emergencyCards', cardId), {
         familyId: family.id,
-        ownerUid: family.createdBy,
+        ownerUid: user.uid,
         memberId,
         name: cleanName,
         age: cleanAge,
@@ -462,11 +707,24 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
 
   const updateFamilyDetails = async (familyName: string, emergencyContact: string) => {
     if (!family) return;
+    const cleanName = (familyName.trim() || 'My Family').slice(0, 80);
+    const cleanContact = emergencyContact.trim().slice(0, 32);
     try {
       await updateDoc(doc(db, 'families', family.id), {
-        familyName: familyName.trim().slice(0, 80),
-        emergencyContact: emergencyContact.trim().slice(0, 32),
+        familyName: cleanName,
+        emergencyContact: cleanContact,
       });
+      if (family.inviteCode && user?.uid === family.createdBy) {
+        try {
+          const inviteRef = doc(db, 'familyInvites', family.inviteCode);
+          const inviteSnap = await getDoc(inviteRef);
+          if (inviteSnap.exists()) {
+            await updateDoc(inviteRef, { familyName: cleanName });
+          }
+        } catch {
+          // Ignore non-critical invite name sync
+        }
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `families/${family.id}`);
     }
@@ -492,6 +750,14 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
         const batch = writeBatch(db);
         chunk.forEach((ref) => batch.delete(ref));
         await batch.commit();
+      }
+
+      if (family.inviteCode && user.uid === family.createdBy) {
+        try {
+          await deleteDoc(doc(db, 'familyInvites', family.inviteCode));
+        } catch {
+          // Ignore if invite already missing
+        }
       }
 
       await updateDoc(doc(db, 'users', user.uid), { familyId: '' });
@@ -521,6 +787,10 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
         setLanguage,
         logout,
         saveFamilySetup,
+        lookupInviteCode,
+        joinFamilyWithCode,
+        ensureInviteCode,
+        leaveFamily,
         addFamilyMember,
         updateFamilyDetails,
         syncEmergencyCard,

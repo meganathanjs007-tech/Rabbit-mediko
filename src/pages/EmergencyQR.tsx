@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-import { Download, ExternalLink, HeartPulse, Phone, QrCode, Share2 } from 'lucide-react';
+import { Download, ExternalLink, Phone, QrCode, Share2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import QRCode from 'react-qr-code';
 import { Link } from 'react-router-dom';
 import { AppShell } from '../components/BottomNav';
+import { BrandLogo } from '../components/BrandLogo';
 import { EmptyState } from '../components/EmptyState';
 import { MemberSelector } from '../components/MemberSelector';
 import { useFamily } from '../hooks/useFamily';
@@ -43,6 +44,7 @@ export default function EmergencyQR() {
       const canvas = await html2canvas(cardRef.current, {
         scale: 2,
         backgroundColor: '#FFFFFF',
+        useCORS: true,
       });
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({
@@ -90,7 +92,7 @@ export default function EmergencyQR() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.2 }}
-        className="space-y-6"
+        className="w-full min-w-0 space-y-6"
       >
         <div className="space-y-1">
           <h1 className="text-2xl font-bold text-slate-900">{t.emergency.title}</h1>
@@ -112,17 +114,19 @@ export default function EmergencyQR() {
         ) : (
           <div className="grid lg:grid-cols-12 gap-6 items-start">
             {/* Printable Card Preview */}
-            <div className="lg:col-span-6 space-y-4">
+            <div className="lg:col-span-6 min-w-0 space-y-4">
               <div
                 ref={cardRef}
                 className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm"
               >
-                <div className="bg-red-600 text-white px-6 py-4 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <HeartPulse className="w-5 h-5" />
-                    <span className="text-sm font-bold tracking-wide">RABBIT MEDIKO · EMERGENCY</span>
+                <div className="bg-red-600 text-white px-5 sm:px-6 py-4 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <BrandLogo size="sm" className="ring-white/30" />
+                    <span className="text-xs sm:text-sm font-bold tracking-wide truncate">
+                      RABBIT MEDIKO · EMERGENCY
+                    </span>
                   </div>
-                  <span className="font-mono text-base font-bold">{activeMember.bloodGroup}</span>
+                  <span className="font-mono text-base font-bold shrink-0">{activeMember.bloodGroup}</span>
                 </div>
 
                 <div className="p-6 flex flex-col items-center text-center space-y-5">
@@ -177,7 +181,7 @@ export default function EmergencyQR() {
             </div>
 
             {/* Readable Emergency Summary */}
-            <div className="lg:col-span-6 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+            <div className="lg:col-span-6 min-w-0 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-base font-bold text-slate-900">Emergency Responder Summary</h3>
                 <Link

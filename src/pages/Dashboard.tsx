@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
   Activity,
@@ -7,25 +7,28 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
+  Copy,
   Pill,
   Plus,
   QrCode,
   ShieldCheck,
+  Users,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 import { AppShell } from '../components/BottomNav';
 import { useFamily } from '../hooks/useFamily';
-import { db, handleFirestoreError, OperationType } from '../services/firebase';
+import { db, getFriendlyFirebaseError } from '../services/firebase';
 import { getBPStatus, getSugarStatus } from '../utils/healthRules';
 import { formatLongDate, getInitials, getTimeGreeting, getTodayISO } from '../utils/helpers';
 import { getT } from '../utils/i18n';
 
 export default function Dashboard() {
-  const { family, members, healthRecords, medicines, medicineLogs, mealPlans, language } = useFamily();
+  const { user, family, members, healthRecords, medicines, medicineLogs, mealPlans, language } = useFamily();
   const t = getT(language);
   const todayISO = getTodayISO();
+  const [copiedCode, setCopiedCode] = useState(false);
 
   const todayPlan = mealPlans[todayISO];
 
@@ -42,7 +45,9 @@ export default function Dashboard() {
       taken: boolean;
     }> = [];
 
-    const activeMeds = medicines.filter((m) => m.active);
+    const activeMeds = medicines.filter(
+      (m) => m.active && (!m.startDate || m.startDate <= todayISO) && (!m.endDate || m.endDate >= todayISO)
+    );
     for (const med of activeMeds) {
       const member = members.find((mem) => mem.id === med.memberId);
       for (const slotTime of med.times) {
@@ -121,7 +126,7 @@ export default function Dashboard() {
         toast.success(`${dose.medicineName} marked pending`);
       } else {
         await setDoc(ref, {
-          ownerUid: family.createdBy,
+          ownerUid: user?.uid ?? family.createdBy,
           medicineId: dose.medicineId,
           memberId: dose.memberId,
           date: todayISO,
@@ -131,39 +136,132 @@ export default function Dashboard() {
         toast.success(`${dose.medicineName} ${t.dashboard.taken}!`);
       }
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `families/${family.id}/medicineLogs/${dose.logId}`);
+      toast.error(getFriendlyFirebaseError(err, language));
     }
   };
 
   const takenCount = todayDoses.filter((d) => d.taken).length;
+  const plannedMealsCount = todayPlan
+    ? (['breakfast', 'lunch', 'dinner', 'snacks'] as const).reduce(
+        (sum, slot) => sum + ((todayPlan[slot]?.length ?? 0) > 0 ? 1 : 0),
+        0
+      )
+    : 0;
 
   return (
     <AppShell>
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.2 }}
-        className="space-y-6"
+        transition={{ duration: 0.18 }}
+        className="w-full min-w-0 space-y-6"
       >
-        {/* Header Greeting */}
+        {/* Header Greeting & Shareable Code */}
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-          <div className="space-y-1">
+          <div className="space-y-1 min-w-0">
             <p className="text-xs font-medium text-slate-500">{formatLongDate(language)}</p>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 truncate">
               {getTimeGreeting(language)}, {family?.familyName || 'Family'}
             </h1>
           </div>
-          <div className="flex items-center gap-4 text-xs text-slate-600 font-mono tabular-nums">
-            <span>{members.length} members</span>
-            <span aria-hidden="true">·</span>
-            <span>
-              {takenCount}/{todayDoses.length} doses today
-            </span>
-          </div>
+          {family?.inviteCode && (
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(family.inviteCode!);
+                  setCopiedCode(true);
+                  toast.success(
+                    language === 'ta'
+                      ? `குடும்பக் குறியீடு நகலெடுக்கப்பட்டது: ${family.inviteCode}`
+                      : `Invite code copied: ${family.inviteCode}`
+                  );
+                  setTimeout(() => setCopiedCode(false), 2000);
+                } catch {
+                  toast.error('Could not copy invite code');
+                }
+              }}
+              className="self-start sm:self-auto inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-mono font-semibold hover:bg-emerald-100 transition-colors min-h-[40px] whitespace-nowrap shrink-0 cursor-pointer"
+              title="Copy Family Invite Code"
+            >
+              <span className="font-sans text-xs font-medium text-emerald-700">
+                {language === 'ta' ? 'குறியீடு:' : 'Invite Code:'}
+              </span>
+              <span className="tracking-wider">{family.inviteCode}</span>
+              {copiedCode ? (
+                <Check className="w-3.5 h-3.5 text-emerald-700" />
+              ) : (
+                <Copy className="w-3.5 h-3.5 text-emerald-700" />
+              )}
+            </button>
+          )}
         </div>
 
+        {/* 4-Metric KPI Summary Strip */}
+        <section aria-label="Family overview" className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <Link
+            to="/vault"
+            className="bg-white border border-slate-200 rounded-2xl p-4 hover:border-emerald-300 transition-colors min-w-0"
+          >
+            <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+              <span className="truncate">{t.dashboard.familyMembers}</span>
+              <Users className="w-4 h-4 text-emerald-600 shrink-0" />
+            </div>
+            <p className="mt-2 text-2xl font-mono font-bold text-slate-900 tabular-nums">
+              {members.length}
+            </p>
+          </Link>
+
+          <Link
+            to="/medicines"
+            className="bg-white border border-slate-200 rounded-2xl p-4 hover:border-emerald-300 transition-colors min-w-0"
+          >
+            <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+              <span className="truncate">{t.dashboard.todaysMedicines}</span>
+              <Pill className="w-4 h-4 text-blue-600 shrink-0" />
+            </div>
+            <p className="mt-2 text-2xl font-mono font-bold text-slate-900 tabular-nums">
+              {takenCount}/{todayDoses.length}
+            </p>
+          </Link>
+
+          <Link
+            to="/vault"
+            className="bg-white border border-slate-200 rounded-2xl p-4 hover:border-emerald-300 transition-colors min-w-0"
+          >
+            <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+              <span className="truncate">{t.dashboard.healthAlerts}</span>
+              <Activity
+                className={`w-4 h-4 shrink-0 ${
+                  healthAlerts.length > 0 ? 'text-red-600' : 'text-emerald-600'
+                }`}
+              />
+            </div>
+            <p
+              className={`mt-2 text-2xl font-mono font-bold tabular-nums ${
+                healthAlerts.length > 0 ? 'text-red-600' : 'text-emerald-700'
+              }`}
+            >
+              {healthAlerts.length}
+            </p>
+          </Link>
+
+          <Link
+            to="/meals"
+            className="bg-white border border-slate-200 rounded-2xl p-4 hover:border-emerald-300 transition-colors min-w-0"
+          >
+            <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+              <span className="truncate">{t.dashboard.todaysMeals}</span>
+              <CalendarHeart className="w-4 h-4 text-emerald-600 shrink-0" />
+            </div>
+            <p className="mt-2 text-2xl font-mono font-bold text-slate-900 tabular-nums">
+              {plannedMealsCount}/4
+            </p>
+          </Link>
+        </section>
+
         {/* Family Members Horizontal Strip */}
-        <section aria-label={t.dashboard.familyMembers} className="space-y-2.5">
+        <section aria-label={t.dashboard.familyMembers} className="min-w-0 space-y-2.5">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-700">{t.dashboard.familyMembers}</h2>
             <Link to="/vault" className="text-xs font-medium text-emerald-700 hover:underline">
@@ -175,7 +273,7 @@ export default function Dashboard() {
               <Link
                 key={m.id}
                 to={`/vault?member=${m.id}`}
-                className="bg-white border border-slate-200 rounded-2xl px-4 py-3 flex items-center gap-3 shrink-0 hover:border-emerald-300 transition-colors min-w-[200px]"
+                className="bg-white border border-slate-200 rounded-2xl px-4 py-3 flex items-center gap-3 shrink-0 hover:border-emerald-300 transition-colors min-w-[200px] max-w-[260px]"
               >
                 <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 font-semibold text-sm flex items-center justify-center shrink-0">
                   {getInitials(m.name)}
@@ -192,7 +290,7 @@ export default function Dashboard() {
         </section>
 
         {/* Health Alerts */}
-        <section aria-label={t.dashboard.healthAlerts}>
+        <section aria-label={t.dashboard.healthAlerts} className="min-w-0">
           {healthAlerts.length === 0 ? (
             <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-4 flex items-center gap-3">
               <ShieldCheck className="w-5 h-5 text-emerald-700 shrink-0" />
@@ -211,15 +309,15 @@ export default function Dashboard() {
                   <Link
                     key={alert.id}
                     to={`/vault?member=${alert.memberId}`}
-                    className="bg-white border border-red-200/80 rounded-xl p-3.5 flex items-center justify-between gap-3 hover:border-red-300 transition-colors"
+                    className="bg-white border border-red-200/80 rounded-xl p-3.5 flex items-center justify-between gap-3 hover:border-red-300 transition-colors min-w-0"
                   >
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">{alert.memberName}</p>
-                      <p className="text-xs text-slate-500">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-900 truncate">{alert.memberName}</p>
+                      <p className="text-xs text-slate-500 truncate">
                         {alert.metric} · {alert.date}
                       </p>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right shrink-0">
                       <p className="text-sm font-mono font-bold text-red-600 tabular-nums">{alert.value}</p>
                       <p className="text-[11px] font-semibold text-red-700">
                         {alert.status === 'high' ? 'High' : 'Low'} · {t.dashboard.highAlert}
@@ -235,10 +333,10 @@ export default function Dashboard() {
         {/* Main 2-Column Content */}
         <div className="grid lg:grid-cols-12 gap-6 items-start">
           {/* Today's Medicines */}
-          <section className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
+          <section className="lg:col-span-7 min-w-0 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold text-slate-900">{t.dashboard.todaysMedicines}</h2>
-              <Link to="/medicines" className="text-xs font-medium text-emerald-700 hover:underline inline-flex items-center gap-1">
+              <Link to="/medicines" className="text-xs font-medium text-emerald-700 hover:underline inline-flex items-center gap-1 shrink-0">
                 <span>View all</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </Link>
@@ -285,7 +383,7 @@ export default function Dashboard() {
           </section>
 
           {/* Right Column: Today's Meals & Quick Actions */}
-          <div className="lg:col-span-5 space-y-6">
+          <div className="lg:col-span-5 min-w-0 space-y-6">
             {/* Quick Actions 2x2 */}
             <section className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3.5">
               <h2 className="text-base font-semibold text-slate-900">{t.dashboard.quickActions}</h2>
@@ -339,7 +437,7 @@ export default function Dashboard() {
                       <span className="text-xs font-semibold text-slate-500 capitalize w-20 shrink-0">
                         {t.meals[slot]}
                       </span>
-                      <span className="text-sm text-slate-900 text-right">
+                      <span className="text-sm text-slate-900 text-right break-words min-w-0">
                         {todayPlan[slot]?.length ? todayPlan[slot].join(', ') : '—'}
                       </span>
                     </div>

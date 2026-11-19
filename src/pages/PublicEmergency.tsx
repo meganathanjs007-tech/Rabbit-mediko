@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
-import { AlertTriangle, HeartPulse, Phone, Pill, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, Phone, Pill, ShieldAlert } from 'lucide-react';
 import { useParams } from 'react-router-dom';
+import { BrandLogo } from '../components/BrandLogo';
 import { LoadingScreen } from '../components/LoadingScreen';
 import { db } from '../services/firebase';
 import type { EmergencyCard } from '../types/health';
@@ -62,7 +63,7 @@ export default function PublicEmergency() {
         <div className="bg-red-600 text-white rounded-3xl p-6 shadow-md space-y-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
-              <HeartPulse className="w-6 h-6" />
+              <BrandLogo size="sm" className="ring-white/30" />
               <span className="text-sm font-bold tracking-wide uppercase">Medical Emergency Card</span>
             </div>
             <span className="text-xs font-medium text-red-100">Rabbit Mediko</span>

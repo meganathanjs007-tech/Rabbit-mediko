@@ -30,7 +30,7 @@ import { AppShell } from '../components/BottomNav';
 import { EmptyState } from '../components/EmptyState';
 import { MemberSelector } from '../components/MemberSelector';
 import { useFamily } from '../hooks/useFamily';
-import { db, handleFirestoreError, OperationType, storage } from '../services/firebase';
+import { db, getFriendlyFirebaseError, storage } from '../services/firebase';
 import type { HealthRecordType } from '../types/health';
 import { getBPStatus, getSugarStatus } from '../utils/healthRules';
 import { generateSecureId, getTodayISO } from '../utils/helpers';
@@ -40,7 +40,7 @@ import { exportMemberHealthPdf } from '../utils/pdfReport';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
 export default function HealthVault() {
-  const { family, members, healthRecords, language } = useFamily();
+  const { user, family, members, healthRecords, language } = useFamily();
   const t = getT(language);
   const [searchParams] = useSearchParams();
 
@@ -170,41 +170,43 @@ export default function HealthVault() {
 
     const cleanNotes = notes.trim().slice(0, 1000);
     const cleanDoctor = doctorName.trim().slice(0, 120);
+    const cleanDate = date && date.length >= 8 ? date.slice(0, 32) : getTodayISO();
 
+    const actorUid = user?.uid ?? family.createdBy;
     try {
       if (entryType === 'BP') {
-        const sys = Number(systolic);
-        const dia = Number(diastolic);
+        const sys = Math.min(350, Math.max(30, Number(systolic) || 120));
+        const dia = Math.min(250, Math.max(20, Number(diastolic) || 80));
         await setDoc(doc(db, 'families', family.id, 'healthRecords', recId), {
-          ownerUid: family.createdBy,
+          ownerUid: actorUid,
           memberId: activeMember.id,
           type: 'BP',
           value: `${sys}/${dia} mmHg`,
           systolic: sys,
           diastolic: dia,
-          date,
+          date: cleanDate,
           ...(cleanNotes ? { notes: cleanNotes } : {}),
           createdAt: serverTimestamp(),
         });
       } else if (entryType === 'Sugar') {
-        const val = Number(sugarVal);
+        const val = Math.min(1500, Math.max(0, Number(sugarVal) || 95));
         await setDoc(doc(db, 'families', family.id, 'healthRecords', recId), {
-          ownerUid: family.createdBy,
+          ownerUid: actorUid,
           memberId: activeMember.id,
           type: 'Sugar',
           value: `${val} mg/dL`,
           numericValue: val,
-          date,
+          date: cleanDate,
           ...(cleanNotes ? { notes: cleanNotes } : {}),
           createdAt: serverTimestamp(),
         });
       } else {
         await setDoc(doc(db, 'families', family.id, 'healthRecords', recId), {
-          ownerUid: family.createdBy,
+          ownerUid: actorUid,
           memberId: activeMember.id,
           type: 'DoctorVisit',
           value: cleanDoctor || 'Doctor Consultation',
-          date,
+          date: cleanDate,
           doctorName: cleanDoctor,
           notes: cleanNotes,
           createdAt: serverTimestamp(),
@@ -216,7 +218,7 @@ export default function HealthVault() {
       setDoctorName('');
       setModalOpen(false);
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `families/${family.id}/healthRecords/${recId}`);
+      toast.error(getFriendlyFirebaseError(err, language));
     } finally {
       setSaving(false);
     }
@@ -228,19 +230,21 @@ export default function HealthVault() {
 
     setUploading(true);
     try {
-      const storageRef = ref(storage, `families/${family.id}/reports/${Date.now()}_${file.name}`);
+      const rawName = (file.name || 'Report').trim() || 'Report';
+      const storageSafeName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
+      const storageRef = ref(storage, `families/${family.id}/reports/${Date.now()}_${storageSafeName}`);
       await uploadBytes(storageRef, file);
       const downloadUrl = await getDownloadURL(storageRef);
 
       const recId = generateSecureId('rep');
       await setDoc(doc(db, 'families', family.id, 'healthRecords', recId), {
-        ownerUid: family.createdBy,
+        ownerUid: user?.uid ?? family.createdBy,
         memberId: activeMember.id,
         type: 'Report',
-        value: file.name,
+        value: rawName.slice(0, 120),
         date: getTodayISO(),
-        fileUrl: downloadUrl,
-        fileName: file.name,
+        fileUrl: downloadUrl.slice(0, 2000),
+        fileName: rawName.slice(0, 200),
         createdAt: serverTimestamp(),
       });
       toast.success(language === 'ta' ? 'அறிக்கை பதிவேற்றப்பட்டது!' : 'Report uploaded!');
@@ -259,7 +263,7 @@ export default function HealthVault() {
       await deleteDoc(doc(db, 'families', family.id, 'healthRecords', recordId));
       toast.success(language === 'ta' ? 'பதிவு நீக்கப்பட்டது' : 'Entry removed');
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `families/${family.id}/healthRecords/${recordId}`);
+      toast.error(getFriendlyFirebaseError(err, language));
     }
   };
 

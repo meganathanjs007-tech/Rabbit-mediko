@@ -68,6 +68,23 @@ export function generateSecureId(prefix = 'id'): string {
   return `${prefix}_${token}`;
 }
 
+export function generateInviteCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let suffix = '';
+  const arr = new Uint8Array(6);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(arr);
+    for (let i = 0; i < arr.length; i++) {
+      suffix += chars[arr[i] % chars.length];
+    }
+  } else {
+    for (let i = 0; i < 6; i++) {
+      suffix += chars[Math.floor(Math.random() * chars.length)];
+    }
+  }
+  return `RM${suffix}`;
+}
+
 export function getInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();

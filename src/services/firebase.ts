@@ -48,6 +48,31 @@ export interface FirestoreErrorInfo {
   };
 }
 
+export function getFriendlyFirebaseError(error: unknown, language: 'en' | 'ta' = 'en'): string {
+  const code = (error as { code?: string })?.code ?? '';
+  const rawMessage = error instanceof Error ? error.message : String(error ?? '');
+
+  let innerMessage = rawMessage;
+  try {
+    const parsed = JSON.parse(rawMessage) as { error?: string };
+    if (parsed?.error) innerMessage = parsed.error;
+  } catch {
+    // Plain message
+  }
+
+  if (code === 'permission-denied' || innerMessage.toLowerCase().includes('permission')) {
+    return language === 'ta'
+      ? 'அணுகல் அனுமதி இல்லை. தயவுசெய்து மீண்டும் உள்நுழைந்து முயற்சிக்கவும்.'
+      : 'Permission denied for this action. Please refresh or check your family access.';
+  }
+  if (code === 'unavailable' || innerMessage.toLowerCase().includes('offline')) {
+    return language === 'ta'
+      ? 'இணைய இணைப்பு தற்காலிகமாக இல்லை. மீண்டும் முயற்சிக்கவும்.'
+      : 'Network temporarily unavailable. Please try again.';
+  }
+  return innerMessage || (language === 'ta' ? 'பிழை ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்.' : 'Something went wrong. Please try again.');
+}
+
 export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
@@ -71,7 +96,7 @@ export function handleFirestoreError(
     path,
   };
   console.error('Firestore Error:', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  throw new Error(getFriendlyFirebaseError(error));
 }
 
 async function testConnection() {

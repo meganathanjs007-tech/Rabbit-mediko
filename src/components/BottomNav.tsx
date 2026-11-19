@@ -5,7 +5,6 @@ import {
   BrainCircuit,
   CalendarHeart,
   FileHeart,
-  HeartPulse,
   LayoutDashboard,
   Menu,
   Pill,
@@ -16,6 +15,8 @@ import {
 } from 'lucide-react';
 import { useFamily } from '../hooks/useFamily';
 import { getT } from '../utils/i18n';
+import { BrandLogo } from './BrandLogo';
+import { OfflineIndicator } from './OfflineIndicator';
 
 export function BottomNav() {
   const { language } = useFamily();
@@ -127,7 +128,7 @@ export function BottomNav() {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { family, language, setLanguage } = useFamily();
+  const { family, language } = useFamily();
   const t = getT(language);
 
   const navItems = [
@@ -142,13 +143,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   ];
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] flex flex-col lg:flex-row">
+    <div className="min-h-screen w-full overflow-x-clip bg-[#F8FAFC] flex flex-col lg:flex-row">
       {/* Desktop Sidebar */}
       <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:fixed lg:inset-y-0 bg-white border-r border-slate-200 z-30">
         <div className="h-16 px-5 flex items-center gap-2.5 border-b border-slate-100">
-          <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
-            <HeartPulse className="w-5 h-5" />
-          </div>
+          <BrandLogo size="md" />
           <span className="text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap">
             {t.appName}
           </span>
@@ -176,74 +175,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        <div className="p-4 border-t border-slate-100 space-y-3">
-          {family && (
+        {family && (
+          <div className="p-4 border-t border-slate-100">
             <div className="text-xs text-slate-500 px-1 truncate">
-              <span className="font-medium text-slate-800">{family.familyName}</span>
+              <span className="font-semibold text-slate-800">{family.familyName}</span>
             </div>
-          )}
-          <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl">
-            <button
-              type="button"
-              onClick={() => void setLanguage('en')}
-              className={`py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
-                language === 'en' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              English
-            </button>
-            <button
-              type="button"
-              onClick={() => void setLanguage('ta')}
-              className={`py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
-                language === 'ta' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              தமிழ்
-            </button>
           </div>
-        </div>
+        )}
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 lg:pl-64 flex flex-col min-h-screen">
+      <div className="flex-1 min-w-0 w-full lg:pl-64 flex flex-col min-h-screen">
         {/* Compact Mobile Header */}
-        <header className="lg:hidden sticky top-0 z-30 h-13 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0">
-              <HeartPulse className="w-4 h-4" />
-            </div>
+        <header className="lg:hidden sticky top-0 z-30 w-full h-14 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <BrandLogo size="sm" />
             <span className="text-base font-bold text-slate-900 truncate whitespace-nowrap">
               {t.appName}
             </span>
           </div>
-          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg shrink-0">
-            <button
-              type="button"
-              onClick={() => void setLanguage('en')}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                language === 'en' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
-              }`}
-            >
-              EN
-            </button>
-            <button
-              type="button"
-              onClick={() => void setLanguage('ta')}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                language === 'ta' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
-              }`}
-            >
-              தமிழ்
-            </button>
-          </div>
+          {family && (
+            <span className="text-xs font-medium text-slate-500 truncate max-w-[40vw] text-right">
+              {family.familyName}
+            </span>
+          )}
         </header>
 
-        <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24 lg:pb-10">
+        <main className="flex-1 min-w-0 w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-6 pb-24 lg:pb-10">
           {children}
         </main>
       </div>
 
+      <OfflineIndicator language={language} />
       <BottomNav />
     </div>
   );

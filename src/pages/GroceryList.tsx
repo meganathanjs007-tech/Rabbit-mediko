@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { AppShell } from '../components/BottomNav';
 import { EmptyState } from '../components/EmptyState';
 import { useFamily } from '../hooks/useFamily';
-import { db, handleFirestoreError, OperationType } from '../services/firebase';
+import { db, getFriendlyFirebaseError } from '../services/firebase';
 import { inferCategoryForItem, MEAL_INGREDIENT_MAP } from '../services/foodData';
 import type { GroceryCategory, GroceryItem } from '../types/health';
 import { generateSecureId } from '../utils/helpers';
@@ -15,7 +15,7 @@ import { getT } from '../utils/i18n';
 const CATEGORIES: GroceryCategory[] = ['Vegetables', 'Grains', 'Dairy', 'Others'];
 
 export default function GroceryList() {
-  const { family, mealPlans, groceryItems, language } = useFamily();
+  const { user, family, mealPlans, groceryItems, language } = useFamily();
   const t = getT(language);
 
   const [newName, setNewName] = useState('');
@@ -75,7 +75,7 @@ export default function GroceryList() {
         chunk.forEach(([name, category]) => {
           const id = generateSecureId('grc');
           batch.set(doc(db, 'families', family.id, 'grocery', id), {
-            ownerUid: family.createdBy,
+            ownerUid: user?.uid ?? family.createdBy,
             name: name.trim().slice(0, 100),
             category,
             checked: false,
@@ -86,7 +86,7 @@ export default function GroceryList() {
       }
       toast.success(`Added ${candidates.size} ingredients from weekly meal plans!`);
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `families/${family.id}/grocery`);
+      toast.error(getFriendlyFirebaseError(err, language));
     } finally {
       setGenerating(false);
     }
@@ -98,7 +98,7 @@ export default function GroceryList() {
     const id = generateSecureId('grc');
     try {
       await setDoc(doc(db, 'families', family.id, 'grocery', id), {
-        ownerUid: family.createdBy,
+        ownerUid: user?.uid ?? family.createdBy,
         name: newName.trim().slice(0, 100),
         category: newCategory,
         checked: false,
@@ -107,7 +107,7 @@ export default function GroceryList() {
       setNewName('');
       toast.success('Item added');
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `families/${family.id}/grocery/${id}`);
+      toast.error(getFriendlyFirebaseError(err, language));
     }
   };
 
@@ -118,7 +118,7 @@ export default function GroceryList() {
         checked: !item.checked,
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `families/${family.id}/grocery/${item.id}`);
+      toast.error(getFriendlyFirebaseError(err, language));
     }
   };
 
@@ -127,7 +127,7 @@ export default function GroceryList() {
     try {
       await deleteDoc(doc(db, 'families', family.id, 'grocery', itemId));
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `families/${family.id}/grocery/${itemId}`);
+      toast.error(getFriendlyFirebaseError(err, language));
     }
   };
 
@@ -144,7 +144,7 @@ export default function GroceryList() {
       await batch.commit();
       toast.success(`Cleared ${checkedItems.length} checked items`);
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `families/${family.id}/grocery`);
+      toast.error(getFriendlyFirebaseError(err, language));
     }
   };
 
@@ -169,7 +169,7 @@ export default function GroceryList() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.2 }}
-        className="space-y-6"
+        className="w-full min-w-0 space-y-6"
       >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <h1 className="text-2xl font-bold text-slate-900">{t.grocery.title}</h1>
@@ -218,7 +218,7 @@ export default function GroceryList() {
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="Add grocery item (e.g. Coriander Leaves)"
-              className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+              className="flex-1 min-w-0 w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
             />
             <select
               value={newCategory}
@@ -268,7 +268,7 @@ export default function GroceryList() {
               return (
                 <section
                   key={category}
-                  className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3"
+                  className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3 min-w-0"
                 >
                   <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
                     <h2 className="text-sm font-bold text-slate-900">{category}</h2>
@@ -280,7 +280,7 @@ export default function GroceryList() {
                         <button
                           type="button"
                           onClick={() => void toggleItem(item)}
-                          className="flex-1 flex items-center gap-3 text-left min-h-[40px] cursor-pointer"
+                          className="flex-1 min-w-0 flex items-center gap-3 text-left min-h-[40px] cursor-pointer"
                         >
                           <span
                             className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors ${
